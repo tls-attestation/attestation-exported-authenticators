@@ -8,7 +8,7 @@ use std::{error::Error, sync::Arc};
 use tdx_quote::Quote;
 
 #[tokio::test]
-async fn quic() {
+async fn demonstrate_with_quic_and_tdx() {
     let (server_config, client_config, cert_der, key_der) = generate_certs().unwrap();
 
     let server = Endpoint::server(server_config, "127.0.0.1:0".parse().unwrap()).unwrap();
@@ -87,6 +87,7 @@ async fn quic() {
         send_stream.write_all(&cert_request.encode()).await.unwrap();
         send_stream.finish().unwrap();
 
+        // Prepare keying material which we will use for checking the quote input data
         let mut keying_material = [0u8; 64];
         conn.export_keying_material(
             &mut keying_material,
@@ -97,6 +98,9 @@ async fn quic() {
 
         // Wait for a response from the server.
         let response = recv_stream.read_to_end(65535).await.unwrap();
+
+        // TODO this response will be an authenticator - and the quote will be extracted from the
+        // certificate extension
         let quote = Quote::from_bytes(&response).unwrap();
 
         assert_eq!(quote.report_input_data(), keying_material);
