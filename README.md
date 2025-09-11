@@ -12,4 +12,4 @@ cargo test --no-default-features
 
 There are currently still some key parts missing:
 - [Authenticator](src/authenticator.rs) is missing length-prefixing and construction of the `CertificateVerify` and `Finished` messages
-- Should use RATS conceptual messages wrapper: [veraison/rust-cmw](https://github.com/veraison/rust-cmw [draft-ietf-rats-msg-wrap](https://datatracker.ietf.org/doc/draft-ietf-rats-msg-wrap)
+- Should use RATS conceptual messages wrapper: [veraison/rust-cmw](https://github.com/veraison/rust-cmw) [draft-ietf-rats-msg-wrap](https://datatracker.ietf.org/doc/draft-ietf-rats-msg-wrap)
