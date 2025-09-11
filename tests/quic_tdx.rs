@@ -46,7 +46,6 @@ async fn demonstrate_with_quic_and_tdx() {
 
         // TODO#1 here we should wrap the quote in a RATS Conceptual Messages Wrapper (CMW)
 
-        let keypair = rcgen::KeyPair::generate().unwrap();
         let cert_der = create_cert_der(&keypair, Some(&quote));
 
         let authenticator = Authenticator::new(cert_der.into(), private_key_der);
