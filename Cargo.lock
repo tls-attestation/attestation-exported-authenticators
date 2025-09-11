@@ -61,6 +61,7 @@ name = "attestation-exported-authenticators"
 version = "0.1.0"
 dependencies = [
  "asn1-rs",
+ "configfs-tsm",
  "quinn",
  "rand_core 0.6.4",
  "rcgen",
@@ -179,6 +180,12 @@ dependencies = [
  "bytes",
  "memchr",
 ]
+
+[[package]]
+name = "configfs-tsm"
+version = "0.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "69e259465c479ea772003ae9e70bcecebefa0e46e0862ffe728edefafc96006b"
 
 [[package]]
 name = "const-oid"

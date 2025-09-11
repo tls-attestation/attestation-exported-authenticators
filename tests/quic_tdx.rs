@@ -10,7 +10,7 @@ use tdx_quote::Quote;
 
 #[tokio::test]
 async fn demonstrate_with_quic_and_tdx() {
-    let (server_config, client_config, cert_der, key_der) = generate_certs().unwrap();
+    let (server_config, client_config, _cert_der, key_der) = generate_certs().unwrap();
 
     let server = Endpoint::server(server_config, "127.0.0.1:0".parse().unwrap()).unwrap();
     let server_addr = server.local_addr().unwrap();
@@ -36,16 +36,8 @@ async fn demonstrate_with_quic_and_tdx() {
         )
         .unwrap();
 
-        let attestation_key = tdx_quote::SigningKey::random(&mut OsRng);
-        let provisioning_certification_key = tdx_quote::SigningKey::random(&mut OsRng);
-
-        // Generate a mock TDX quote using the exported keying material as input
-        let quote = Quote::mock(
-            attestation_key.clone(),
-            provisioning_certification_key.clone(),
-            keying_material,
-            b"Mock cert chain".to_vec(),
-        );
+        // Generate a TDX quote using the exported keying material as input
+        let quote = generate_quote(keying_material);
 
         let private_key_der = PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(key_der));
 
@@ -56,7 +48,7 @@ async fn demonstrate_with_quic_and_tdx() {
         // - Create a CertificateVerify message (by signing the certificate)
         // - Create a Finished message
         let keypair = rcgen::KeyPair::generate().unwrap();
-        let cert_der = create_cert_der(keypair, Some(&quote.as_bytes()));
+        let cert_der = create_cert_der(keypair, Some(&quote));
 
         let authenticator = Authenticator::new(cert_der.into(), private_key_der);
 
@@ -123,7 +115,7 @@ async fn demonstrate_with_quic_and_tdx() {
 
 /// A helper to generate TLS configuration
 fn generate_certs() -> Result<(ServerConfig, ClientConfig, Vec<u8>, Vec<u8>), Box<dyn Error>> {
-    let keypair = rcgen::KeyPair::generate().unwrap();
+    // let keypair = rcgen::KeyPair::generate().unwrap();
 
     let certified_key = rcgen::generate_simple_self_signed(["localhost".to_string()])?;
     let key = certified_key.signing_key.serialize_der();
@@ -161,4 +153,23 @@ fn create_cert_der(keypair: rcgen::KeyPair, attestation_cmw: Option<&[u8]>) -> V
 
     let cert = params.self_signed(&keypair).unwrap();
     cert.der().to_vec()
+}
+
+/// Create a mock quote for testing on non-TDX hardware
+#[cfg(feature = "mock")]
+fn generate_quote(input: [u8; 64]) -> Vec<u8> {
+    let attestation_key = tdx_quote::SigningKey::random(&mut OsRng);
+    let provisioning_certification_key = tdx_quote::SigningKey::random(&mut OsRng);
+    Quote::mock(
+        attestation_key.clone(),
+        provisioning_certification_key.clone(),
+        input,
+        b"Mock cert chain".to_vec(),
+    )
+    .as_bytes()
+}
+
+#[cfg(not(feature = "mock"))]
+fn generate_quote(input: [u8; 64]) -> Vec<u8> {
+    configfs_tsm::create_quote(input).unwrap()
 }
