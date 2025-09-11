@@ -1,11 +1,17 @@
+use asn1_rs::Oid;
+use asn1_rs::ToDer;
+use attestation_exported_authenticators::create_custom_extension;
+use attestation_exported_authenticators::extract_attestation;
 use attestation_exported_authenticators::{
     authenticator::Authenticator, certificate_request::CertificateRequest,
 };
 use quinn::{crypto::rustls::QuicClientConfig, ClientConfig, Endpoint, ServerConfig};
 use rand_core::{OsRng, RngCore};
+use rcgen::DistinguishedName;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
 use std::{error::Error, sync::Arc};
 use tdx_quote::Quote;
+use x509_parser::prelude::*;
 
 #[tokio::test]
 async fn demonstrate_with_quic_and_tdx() {
@@ -46,18 +52,24 @@ async fn demonstrate_with_quic_and_tdx() {
             b"Mock cert chain".to_vec(),
         );
 
-        let cert_der = CertificateDer::from(cert_der);
         let private_key_der = PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(key_der));
+
         // TODO here we should:
         // - Wrap the quote in a RATS Conceptual Messages Wrapper (CMW)
         // - Add the CMW to the cerificate as a `cmw_attestation` extension
         // - Create an authenticator
         // - Create a CertificateVerify message (by signing the certificate)
         // - Create a Finished message
+        let keypair = rcgen::KeyPair::generate().unwrap();
+        let cert_der = create_cert_der(keypair, Some(&quote.as_bytes()));
 
-        let _authenticator = Authenticator::new(cert_der, private_key_der);
+        // let authenticator = Authenticator::new(cert_der.into(), private_key_der);
 
-        send_stream.write_all(&quote.as_bytes()).await.unwrap();
+        send_stream
+            .write_all(&cert_der)
+            // .write_all(&authenticator.encode())
+            .await
+            .unwrap();
         send_stream.finish().unwrap(); // Close the send side of the stream
 
         conn.closed().await;
@@ -82,7 +94,7 @@ async fn demonstrate_with_quic_and_tdx() {
 
         let cert_request = CertificateRequest {
             certificate_request_context: context.to_vec(),
-            extensions: b"bar".to_vec(),
+            extensions: b"cmw_attestation".to_vec(), // TODO
         };
         send_stream.write_all(&cert_request.encode()).await.unwrap();
         send_stream.finish().unwrap();
@@ -101,7 +113,11 @@ async fn demonstrate_with_quic_and_tdx() {
 
         // TODO this response will be an authenticator - and the quote will be extracted from the
         // certificate extension
-        let quote = Quote::from_bytes(&response).unwrap();
+        // let authenticator = Authenticator::decode(response).unwrap();
+
+        let quote_bytes = extract_attestation(&response);
+
+        let quote = Quote::from_bytes(&quote_bytes).unwrap();
 
         assert_eq!(quote.report_input_data(), keying_material);
     });
@@ -115,6 +131,8 @@ async fn demonstrate_with_quic_and_tdx() {
 
 /// A helper to generate TLS configuration
 fn generate_certs() -> Result<(ServerConfig, ClientConfig, Vec<u8>, Vec<u8>), Box<dyn Error>> {
+    let keypair = rcgen::KeyPair::generate().unwrap();
+
     let certified_key = rcgen::generate_simple_self_signed(["localhost".to_string()])?;
     let key = certified_key.signing_key.serialize_der();
     let cert = certified_key.cert.der();
@@ -136,4 +154,19 @@ fn generate_certs() -> Result<(ServerConfig, ClientConfig, Vec<u8>, Vec<u8>), Bo
     ));
 
     Ok((server_config, client_config, cert.to_vec(), key))
+}
+
+use rcgen::CertificateParams;
+
+fn create_cert_der(keypair: rcgen::KeyPair, attestation_cmw: Option<&[u8]>) -> Vec<u8> {
+    let mut params = CertificateParams::new(["localhost".to_string()]).unwrap();
+
+    if let Some(attestation) = attestation_cmw {
+        params
+            .custom_extensions
+            .push(create_custom_extension(attestation));
+    }
+
+    let cert = params.self_signed(&keypair).unwrap();
+    cert.der().to_vec()
 }

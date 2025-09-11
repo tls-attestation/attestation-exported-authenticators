@@ -60,6 +60,7 @@ dependencies = [
 name = "attestation-exported-authenticators"
 version = "0.1.0"
 dependencies = [
+ "asn1-rs",
  "quinn",
  "rand_core 0.6.4",
  "rcgen",
