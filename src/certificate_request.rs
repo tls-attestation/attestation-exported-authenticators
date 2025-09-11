@@ -1,5 +1,6 @@
 use std::io::Read;
 
+/// A CertificateRequest message as per RFC9261 Exported Authenticators
 #[derive(Debug, PartialEq, Clone)]
 pub struct CertificateRequest {
     pub certificate_request_context: Vec<u8>,
@@ -7,6 +8,7 @@ pub struct CertificateRequest {
 }
 
 impl CertificateRequest {
+    /// Serialize to bytes
     pub fn encode(&self) -> Vec<u8> {
         // Handshake type: A 1-byte value for CertificateRequest (0x0D).
         let mut encoded_message = vec![0x0D];
@@ -33,6 +35,7 @@ impl CertificateRequest {
         encoded_message
     }
 
+    /// Deserialize from bytes
     pub fn decode(data: &[u8]) -> Result<Self, DecodeError> {
         let mut cursor = std::io::Cursor::new(data);
 
