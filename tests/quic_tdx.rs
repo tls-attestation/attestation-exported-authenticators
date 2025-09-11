@@ -98,7 +98,7 @@ async fn demonstrate_with_quic_and_tdx() {
 
         let authenticator = Authenticator::decode(response).unwrap();
 
-        let quote_bytes = extract_attestation(&authenticator.certificate);
+        let quote_bytes = extract_attestation(&authenticator.certificate).unwrap();
 
         let quote = Quote::from_bytes(&quote_bytes).unwrap();
 
@@ -145,7 +145,7 @@ fn create_cert_der(keypair: &rcgen::KeyPair, attestation_cmw: Option<&[u8]>) -> 
     if let Some(attestation) = attestation_cmw {
         params
             .custom_extensions
-            .push(create_cwm_attestation_extension(attestation));
+            .push(create_cwm_attestation_extension(attestation).unwrap());
     }
 
     let cert = params.self_signed(keypair).unwrap();

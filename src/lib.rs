@@ -5,6 +5,7 @@ use asn1_rs::{FromDer, Sequence};
 use asn1_rs::{Oid, ToDer};
 use rcgen::CustomExtension;
 use x509_parser::der_parser::oid;
+use x509_parser::error::X509Error;
 use x509_parser::prelude::X509Certificate;
 
 /// Returns the OID for the cwm attestation
@@ -14,32 +15,72 @@ pub fn oid_cwm_attestation() -> Oid<'static> {
 }
 
 /// Given CWM wrapped attestation data create a [CustomExtension]
-pub fn create_cwm_attestation_extension(cwm_wrapped_attestation: &[u8]) -> CustomExtension {
+pub fn create_cwm_attestation_extension(
+    cwm_wrapped_attestation: &[u8],
+) -> Result<CustomExtension, CwmAttestationCertifcateExtensionError> {
     let sequence = Sequence::new(cwm_wrapped_attestation.into());
 
-    CustomExtension::from_oid_content(
-        &oid_to_u64_vec(&oid_cwm_attestation()).unwrap(),
-        sequence.to_der_vec().unwrap(),
-    )
+    Ok(CustomExtension::from_oid_content(
+        &oid_to_u64_vec(&oid_cwm_attestation())?,
+        sequence.to_der_vec()?,
+    ))
 }
 
 /// Given a DER encoded certificate, extract the CWM wrapped attestation data
-pub fn extract_attestation(cert_der: &[u8]) -> Vec<u8> {
-    let (_, cert) = X509Certificate::from_der(cert_der).unwrap();
-    let extensions = cert.extensions_map().unwrap();
-    let extension = extensions.get(&oid_cwm_attestation()).unwrap();
+pub fn extract_attestation(
+    cert_der: &[u8],
+) -> Result<Vec<u8>, CwmAttestationCertifcateExtensionError> {
+    let (_, cert) = X509Certificate::from_der(cert_der)?;
+    let extensions = cert.extensions_map()?;
+    let extension = extensions
+        .get(&oid_cwm_attestation())
+        .ok_or(CwmAttestationCertifcateExtensionError::NoCwmExtension)?;
     let sequence_der = extension.value.to_vec();
-    let (_, sequence) = Sequence::from_der(&sequence_der).unwrap();
-    sequence.content.to_vec()
+    let (_, sequence) = Sequence::from_der(&sequence_der)?;
+    Ok(sequence.content.to_vec())
 }
 
 /// Internal helper to format an OID as a Vec<u64>
-fn oid_to_u64_vec(oid: &Oid) -> Result<Vec<u64>, String> {
+fn oid_to_u64_vec(oid: &Oid) -> Result<Vec<u64>, CwmAttestationCertifcateExtensionError> {
     let iter = oid
         .iter()
-        .ok_or_else(|| "OID component is too large to fit in u64".to_string())?;
+        .ok_or_else(|| CwmAttestationCertifcateExtensionError::OIDComponentTooLarge)?;
 
     Ok(iter.collect())
+}
+
+/// An error when handling a cwm_attestion certificate extension
+#[derive(Debug)]
+pub enum CwmAttestationCertifcateExtensionError {
+    OIDComponentTooLarge,
+    Asn1Serialize(asn1_rs::SerializeError),
+    X509(X509Error),
+    NoCwmExtension,
+    ASN1(asn1_rs::Error),
+}
+
+impl From<asn1_rs::SerializeError> for CwmAttestationCertifcateExtensionError {
+    fn from(err: asn1_rs::SerializeError) -> Self {
+        Self::Asn1Serialize(err)
+    }
+}
+
+impl From<asn1_rs::Err<X509Error>> for CwmAttestationCertifcateExtensionError {
+    fn from(err: asn1_rs::Err<X509Error>) -> Self {
+        Self::X509(err.into())
+    }
+}
+
+impl From<X509Error> for CwmAttestationCertifcateExtensionError {
+    fn from(err: X509Error) -> Self {
+        Self::X509(err)
+    }
+}
+
+impl From<asn1_rs::Err<asn1_rs::Error>> for CwmAttestationCertifcateExtensionError {
+    fn from(err: asn1_rs::Err<asn1_rs::Error>) -> Self {
+        Self::ASN1(err.into())
+    }
 }
 
 #[cfg(test)]
@@ -54,7 +95,7 @@ mod tests {
         if let Some(attestation) = attestation {
             params
                 .custom_extensions
-                .push(create_cwm_attestation_extension(attestation));
+                .push(create_cwm_attestation_extension(attestation).unwrap());
         }
 
         let cert = params.self_signed(&keypair).unwrap();
@@ -65,6 +106,6 @@ mod tests {
     fn extract_attestation_from_cert() {
         let attestation = b"attestation goes here";
         let cert_der = create_cert_der(Some(attestation));
-        assert_eq!(extract_attestation(&cert_der), attestation);
+        assert_eq!(extract_attestation(&cert_der).unwrap(), attestation);
     }
 }
