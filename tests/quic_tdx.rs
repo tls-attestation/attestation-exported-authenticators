@@ -4,13 +4,15 @@ use attestation_exported_authenticators::create_custom_extension;
 use attestation_exported_authenticators::extract_attestation;
 use quinn::{crypto::rustls::QuicClientConfig, ClientConfig, Endpoint, ServerConfig};
 use rand_core::{OsRng, RngCore};
+use rcgen::CertificateParams;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
 use std::{error::Error, sync::Arc};
 use tdx_quote::Quote;
 
 #[tokio::test]
 async fn demonstrate_with_quic_and_tdx() {
-    let (server_config, client_config, _cert_der, key_der) = generate_certs().unwrap();
+    let keypair = rcgen::KeyPair::generate().unwrap();
+    let (server_config, client_config) = generate_certs(&keypair).unwrap();
 
     let server = Endpoint::server(server_config, "127.0.0.1:0".parse().unwrap()).unwrap();
     let server_addr = server.local_addr().unwrap();
@@ -39,16 +41,13 @@ async fn demonstrate_with_quic_and_tdx() {
         // Generate a TDX quote using the exported keying material as input
         let quote = generate_quote(keying_material);
 
-        let private_key_der = PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(key_der));
+        let private_key_der =
+            PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(keypair.serialize_der()));
 
-        // TODO here we should:
-        // - Wrap the quote in a RATS Conceptual Messages Wrapper (CMW)
-        // - Add the CMW to the cerificate as a `cmw_attestation` extension
-        // - Create an authenticator
-        // - Create a CertificateVerify message (by signing the certificate)
-        // - Create a Finished message
+        // TODO#1 here we should wrap the quote in a RATS Conceptual Messages Wrapper (CMW)
+
         let keypair = rcgen::KeyPair::generate().unwrap();
-        let cert_der = create_cert_der(keypair, Some(&quote));
+        let cert_der = create_cert_der(&keypair, Some(&quote));
 
         let authenticator = Authenticator::new(cert_der.into(), private_key_der);
 
@@ -114,15 +113,15 @@ async fn demonstrate_with_quic_and_tdx() {
 }
 
 /// A helper to generate TLS configuration
-fn generate_certs() -> Result<(ServerConfig, ClientConfig, Vec<u8>, Vec<u8>), Box<dyn Error>> {
-    // let keypair = rcgen::KeyPair::generate().unwrap();
+fn generate_certs(
+    keypair: &rcgen::KeyPair,
+) -> Result<(ServerConfig, ClientConfig), Box<dyn Error>> {
+    let key = keypair.serialize_der();
 
-    let certified_key = rcgen::generate_simple_self_signed(["localhost".to_string()])?;
-    let key = certified_key.signing_key.serialize_der();
-    let cert = certified_key.cert.der();
+    let cert = create_cert_der(keypair, None);
 
     let private_key_der = PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(key.clone()));
-    let server_config = ServerConfig::with_single_cert(vec![cert.clone()], private_key_der)?;
+    let server_config = ServerConfig::with_single_cert(vec![cert.clone().into()], private_key_der)?;
 
     let cert_der = CertificateDer::from(cert.clone());
     let mut roots = rustls::RootCertStore::empty();
@@ -137,12 +136,10 @@ fn generate_certs() -> Result<(ServerConfig, ClientConfig, Vec<u8>, Vec<u8>), Bo
         .unwrap(),
     ));
 
-    Ok((server_config, client_config, cert.to_vec(), key))
+    Ok((server_config, client_config))
 }
 
-use rcgen::CertificateParams;
-
-fn create_cert_der(keypair: rcgen::KeyPair, attestation_cmw: Option<&[u8]>) -> Vec<u8> {
+fn create_cert_der(keypair: &rcgen::KeyPair, attestation_cmw: Option<&[u8]>) -> Vec<u8> {
     let mut params = CertificateParams::new(["localhost".to_string()]).unwrap();
 
     if let Some(attestation) = attestation_cmw {
@@ -151,7 +148,7 @@ fn create_cert_der(keypair: rcgen::KeyPair, attestation_cmw: Option<&[u8]>) -> V
             .push(create_custom_extension(attestation));
     }
 
-    let cert = params.self_signed(&keypair).unwrap();
+    let cert = params.self_signed(keypair).unwrap();
     cert.der().to_vec()
 }
 
