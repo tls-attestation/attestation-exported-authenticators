@@ -1,17 +1,12 @@
-use asn1_rs::Oid;
-use asn1_rs::ToDer;
+use attestation_exported_authenticators::authenticator::Authenticator;
+use attestation_exported_authenticators::certificate_request::CertificateRequest;
 use attestation_exported_authenticators::create_custom_extension;
 use attestation_exported_authenticators::extract_attestation;
-use attestation_exported_authenticators::{
-    authenticator::Authenticator, certificate_request::CertificateRequest,
-};
 use quinn::{crypto::rustls::QuicClientConfig, ClientConfig, Endpoint, ServerConfig};
 use rand_core::{OsRng, RngCore};
-use rcgen::DistinguishedName;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
 use std::{error::Error, sync::Arc};
 use tdx_quote::Quote;
-use x509_parser::prelude::*;
 
 #[tokio::test]
 async fn demonstrate_with_quic_and_tdx() {
@@ -63,11 +58,10 @@ async fn demonstrate_with_quic_and_tdx() {
         let keypair = rcgen::KeyPair::generate().unwrap();
         let cert_der = create_cert_der(keypair, Some(&quote.as_bytes()));
 
-        // let authenticator = Authenticator::new(cert_der.into(), private_key_der);
+        let authenticator = Authenticator::new(cert_der.into(), private_key_der);
 
         send_stream
-            .write_all(&cert_der)
-            // .write_all(&authenticator.encode())
+            .write_all(&authenticator.encode())
             .await
             .unwrap();
         send_stream.finish().unwrap(); // Close the send side of the stream
@@ -111,11 +105,9 @@ async fn demonstrate_with_quic_and_tdx() {
         // Wait for a response from the server.
         let response = recv_stream.read_to_end(65535).await.unwrap();
 
-        // TODO this response will be an authenticator - and the quote will be extracted from the
-        // certificate extension
-        // let authenticator = Authenticator::decode(response).unwrap();
+        let authenticator = Authenticator::decode(response).unwrap();
 
-        let quote_bytes = extract_attestation(&response);
+        let quote_bytes = extract_attestation(&authenticator.certificate);
 
         let quote = Quote::from_bytes(&quote_bytes).unwrap();
 

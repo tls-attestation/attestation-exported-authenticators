@@ -2,7 +2,7 @@ use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 
 #[derive(Debug, PartialEq, Clone)]
 pub struct Authenticator {
-    certificate: Vec<u8>,
+    pub certificate: Vec<u8>,
     certificate_verify: Vec<u8>,
     finished: Vec<u8>,
 }
@@ -38,7 +38,12 @@ impl Authenticator {
         output
     }
 
-    pub fn decode(_input: Vec<u8>) -> Result<Self, ()> {
-        todo!()
+    pub fn decode(input: Vec<u8>) -> Result<Self, ()> {
+        // TODO this should actually parse all values
+        Ok(Self {
+            certificate: input,
+            certificate_verify: Default::default(),
+            finished: Default::default(),
+        })
     }
 }
