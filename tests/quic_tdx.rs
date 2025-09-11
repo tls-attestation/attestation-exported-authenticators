@@ -1,7 +1,7 @@
-use attestation_exported_authenticators::authenticator::Authenticator;
-use attestation_exported_authenticators::certificate_request::CertificateRequest;
-use attestation_exported_authenticators::create_custom_extension;
-use attestation_exported_authenticators::extract_attestation;
+use attestation_exported_authenticators::{
+    authenticator::Authenticator, certificate_request::CertificateRequest,
+    create_cwm_attestation_extension, extract_attestation,
+};
 use quinn::{crypto::rustls::QuicClientConfig, ClientConfig, Endpoint, ServerConfig};
 use rand_core::{OsRng, RngCore};
 use rcgen::CertificateParams;
@@ -145,7 +145,7 @@ fn create_cert_der(keypair: &rcgen::KeyPair, attestation_cmw: Option<&[u8]>) -> 
     if let Some(attestation) = attestation_cmw {
         params
             .custom_extensions
-            .push(create_custom_extension(attestation));
+            .push(create_cwm_attestation_extension(attestation));
     }
 
     let cert = params.self_signed(keypair).unwrap();
