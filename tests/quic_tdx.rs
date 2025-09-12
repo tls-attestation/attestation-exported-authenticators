@@ -97,7 +97,7 @@ async fn demonstrate_with_quic_and_tdx() {
 
         let authenticator = Authenticator::decode(response).unwrap();
 
-        let quote_bytes = extract_attestation(&authenticator.certificate).unwrap();
+        let quote_bytes = extract_attestation(&authenticator.cert_der().unwrap()).unwrap();
 
         let quote = Quote::from_bytes(&quote_bytes).unwrap();
 

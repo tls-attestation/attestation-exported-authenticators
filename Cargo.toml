@@ -8,6 +8,8 @@ rustls = { version = "0.23.5", default-features = false, features = ["std"] }
 x509-parser = "0.18.0"
 asn1-rs = "0.7.1"
 rcgen = "0.14.3"
+p256 = "0.13.2"
+sha2 = "0.10.9"
 
 [dev-dependencies]
 quinn = "0.11.9"
