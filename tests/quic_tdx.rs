@@ -95,7 +95,7 @@ async fn demonstrate_with_quic_and_tdx() {
         // Wait for a response from the server.
         let response = recv_stream.read_to_end(65535).await.unwrap();
 
-        let authenticator = Authenticator::decode(response).unwrap();
+        let authenticator = Authenticator::decode(&response).unwrap();
 
         let quote_bytes = extract_attestation(&authenticator.cert_der().unwrap()).unwrap();
 

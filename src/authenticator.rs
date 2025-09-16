@@ -11,8 +11,8 @@ use sha2::{Digest, Sha256};
 #[derive(Debug, PartialEq, Clone)]
 pub struct Authenticator {
     certificate: Certificate,
-    certificate_verify: Vec<u8>,
-    finished: Vec<u8>,
+    certificate_verify: CertificateVerify,
+    finished: Finished,
 }
 
 impl Authenticator {
@@ -25,6 +25,51 @@ impl Authenticator {
             certificate_list: vec![CertificateEntry::from_cert_der(certificate.to_vec())],
         };
 
+        let certificate_verify = CertificateVerify::new(&certificate, private_key);
+
+        Self {
+            certificate,
+            certificate_verify,
+            finished: Finished::new(),
+        }
+    }
+
+    /// Serialize to bytes
+    /// Certificate || CertificateVerify || Finished
+    pub fn encode(&self) -> Vec<u8> {
+        let mut output = Vec::new();
+        output.extend_from_slice(&self.certificate.encode());
+        output.extend_from_slice(&self.certificate_verify.encode());
+        output.extend_from_slice(&self.finished.encode());
+        output
+    }
+
+    /// Deserialize from bytes
+    pub fn decode(input: &[u8]) -> Result<Self, ()> {
+        // TODO this should actually parse all values
+        let (certificate, input) = Certificate::decode(&input).unwrap();
+        Ok(Self {
+            certificate,
+            certificate_verify: CertificateVerify::decode(&input).unwrap(), // TODO parse this with length prefix
+            finished: Finished::decode(&[]),
+        })
+    }
+
+    pub fn cert_der(&self) -> Result<Vec<u8>, String> {
+        match self.certificate.certificate_list.iter().next() {
+            Some(certificate_entry) => certificate_entry.as_cert_der(),
+            None => Err("No ceritficate".to_string()),
+        }
+    }
+}
+
+#[derive(Debug, PartialEq, Clone)]
+struct CertificateVerify {
+    signature: Signature,
+}
+
+impl CertificateVerify {
+    fn new(certificate: &Certificate, private_key: PrivateKeyDer) -> Self {
         // TODO#4 this should be the signature
         // https://www.rfc-editor.org/rfc/rfc9261#section-5.2.2
         // TODO check the encoding is PKCS8
@@ -42,50 +87,48 @@ impl Authenticator {
         //
         // Hash(Handshake Context || authenticator request || Certificate)
         let mut hasher = Sha256::new();
-        hasher.update(&certificate.encode());
+        // TODO hasher.update(context);
+        // TODO hasher.update(authenticator_request);
+        hasher.update(certificate.encode());
+
         let message = hasher.finalize();
-        let signature: Signature = signing_key.sign(&message);
-
-        let certificate_verify = signature.to_vec();
-
-        // TODO#4 this should be:
-        // Finished = HMAC(Finished MAC Key, Hash(Handshake Context ||
-        //      authenticator request || Certificate || CertificateVerify))
-        let finished = Default::default();
 
         Self {
-            certificate,
-            certificate_verify,
-            finished,
+            signature: signing_key.sign(&message),
         }
     }
 
-    /// Serialize to bytes
-    /// Certificate || CertificateVerify || Finished
-    pub fn encode(&self) -> Vec<u8> {
-        let mut output = Vec::new();
-        output.extend_from_slice(&self.certificate.encode());
-        output.extend_from_slice(&self.certificate_verify);
-        output.extend_from_slice(&self.finished);
-        output
+    fn encode(&self) -> Vec<u8> {
+        self.signature.to_vec()
     }
 
-    /// Deserialize from bytes
-    pub fn decode(input: Vec<u8>) -> Result<Self, ()> {
-        // TODO this should actually parse all values
-        let (certificate, input) = Certificate::decode(&input).unwrap();
+    fn decode(input: &[u8]) -> Result<Self, String> {
+        let signature_bytes: [u8; 64] = input.try_into().map_err(|_| "Bad length".to_string())?;
         Ok(Self {
-            certificate,
-            certificate_verify: input.to_vec(), // TODO parse this with length prefix
-            finished: Default::default(),
+            signature: Signature::from_bytes(&signature_bytes.into()).map_err(|e| e.to_string())?,
         })
     }
+}
 
-    pub fn cert_der(&self) -> Result<Vec<u8>, String> {
-        match self.certificate.certificate_list.iter().next() {
-            Some(certificate_entry) => certificate_entry.as_cert_der(),
-            None => Err("No ceritficate".to_string()),
-        }
+/// The Finished message which is:
+///
+/// HMAC(Finished MAC Key, Hash(Handshake Context || authenticator request || Certificate || CertificateVerify))
+#[derive(Debug, PartialEq, Clone)]
+struct Finished {}
+
+impl Finished {
+    fn new() -> Self {
+        // TODO#4 this should be:
+        // let finished = Default::default();
+        Self {}
+    }
+
+    fn encode(&self) -> Vec<u8> {
+        Vec::new()
+    }
+
+    fn decode(_input: &[u8]) -> Self {
+        Self {}
     }
 }
 
@@ -324,7 +367,7 @@ mod tests {
 
         let encoded = authenticator.encode();
 
-        assert_eq!(authenticator, Authenticator::decode(encoded).unwrap());
+        assert_eq!(authenticator, Authenticator::decode(&encoded).unwrap());
     }
 
     #[test]
