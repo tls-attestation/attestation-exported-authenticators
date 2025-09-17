@@ -28,6 +28,10 @@ impl Authenticator {
         certificate: CertificateDer,
         private_key: PrivateKeyDer,
         certificate_request: &CertificateRequest,
+        // The Handshake Context is an exporter value that is derived using the label "EXPORTER-client authenticator handshake context" or "EXPORTER-server authenticator handshake context" for authenticators sent by the client or server, respectively.
+        handshake_context_exporter: [u8; 64],
+        // The Finished MAC Key is an exporter value derived using the label "EXPORTER-client authenticator finished key" or "EXPORTER-server authenticator finished key" for authenticators sent by the client or server, respectively.
+        finished_key_exporter: [u8; 32],
     ) -> Self {
         let certificate = certificate.to_vec();
         let certificate = Certificate {
@@ -35,12 +39,20 @@ impl Authenticator {
             certificate_list: vec![CertificateEntry::from_cert_der(certificate.to_vec())],
         };
 
-        // TODO this should also take Context and authenticator_request
-        let certificate_verify =
-            CertificateVerify::new(&certificate, private_key, &certificate_request);
+        let certificate_verify = CertificateVerify::new(
+            &certificate,
+            private_key,
+            &certificate_request,
+            &handshake_context_exporter,
+        );
 
-        // TODO this should also take Context and authenticator_request
-        let finished = Finished::new(&certificate, &certificate_verify, certificate_request);
+        let finished = Finished::new(
+            &certificate,
+            &certificate_verify,
+            certificate_request,
+            &handshake_context_exporter,
+            &finished_key_exporter,
+        );
 
         Self {
             certificate,
@@ -77,9 +89,28 @@ impl Authenticator {
         }
     }
 
-    pub fn verify(&self, certificate_request: &CertificateRequest) -> Result<(), String> {
-        self.certificate_verify
-            .verify(&self.certificate, certificate_request)
+    pub fn verify(
+        &self,
+        certificate_request: &CertificateRequest,
+        handshake_context_exporter: &[u8; 64],
+        finished_key_exporter: &[u8; 32],
+    ) -> Result<(), String> {
+        let finished_check = Finished::new(
+            &self.certificate,
+            &self.certificate_verify,
+            certificate_request,
+            handshake_context_exporter,
+            finished_key_exporter,
+        );
+        if finished_check != self.finished {
+            return Err("Could not verify Finished message".to_string());
+        }
+
+        self.certificate_verify.verify(
+            &self.certificate,
+            certificate_request,
+            handshake_context_exporter,
+        )
     }
 }
 
@@ -95,10 +126,15 @@ impl CertificateVerify {
         certificate: &Certificate,
         private_key: PrivateKeyDer,
         cerificate_request: &CertificateRequest,
+        handshake_context_exporter: &[u8; 64],
     ) -> Self {
         // TODO check the encoding is PKCS8
         let signing_key = SigningKey::from_pkcs8_der(private_key.secret_der()).unwrap();
-        let message = Self::create_certificate_verify_message(certificate, cerificate_request);
+        let message = Self::create_certificate_verify_message(
+            certificate,
+            cerificate_request,
+            handshake_context_exporter,
+        );
 
         Self {
             signature: signing_key.sign(&message),
@@ -160,6 +196,7 @@ impl CertificateVerify {
         &self,
         certificate: &Certificate,
         cerificate_request: &CertificateRequest,
+        handshake_context_exporter: &[u8; 64],
     ) -> Result<(), String> {
         // Extract the public key from the certificate
         let certificate_entry = certificate.certificate_list.iter().next().unwrap();
@@ -175,6 +212,7 @@ impl CertificateVerify {
                 let message = CertificateVerify::create_certificate_verify_message(
                     certificate,
                     cerificate_request,
+                    handshake_context_exporter,
                 );
                 verifying_key
                     .verify(&message, &self.signature)
@@ -192,6 +230,7 @@ impl CertificateVerify {
     fn create_certificate_verify_message(
         certificate: &Certificate,
         certificate_request: &CertificateRequest,
+        handshake_context_exporter: &[u8; 64],
     ) -> Vec<u8> {
         let mut message = Vec::new();
 
@@ -211,7 +250,7 @@ impl CertificateVerify {
             //
             // Hash(Handshake Context || authenticator request || Certificate)
             let mut hasher = Sha256::new();
-            // TODO hasher.update(context);
+            hasher.update(handshake_context_exporter);
             hasher.update(certificate_request.encode());
             hasher.update(certificate.encode());
 
@@ -236,13 +275,12 @@ impl Finished {
         certificate: &Certificate,
         certificate_verify: &CertificateVerify,
         certificate_request: &CertificateRequest,
+        handshake_context_exporter: &[u8; 64],
+        finished_key_exporter: &[u8; 32],
     ) -> Self {
-        // TODO this should be an exported secret
-        let key = [0; 32];
+        let mut mac = Hmac::<Sha256>::new_from_slice(finished_key_exporter).unwrap();
 
-        let mut mac = Hmac::<Sha256>::new_from_slice(&key).unwrap();
-
-        // TODO mac.update(context)
+        mac.update(handshake_context_exporter);
         mac.update(&certificate_request.encode());
         mac.update(&certificate.encode());
         mac.update(&certificate_verify.encode());
@@ -507,14 +545,29 @@ mod tests {
             PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(keypair.serialize_der()));
 
         let certificate_request = create_certificate_request();
-        let authenticator =
-            Authenticator::new(cert_der.into(), private_key_der, &certificate_request);
+
+        let handshake_context_exporter = [0; 64];
+        let finished_key_exporter = [0; 32];
+
+        let authenticator = Authenticator::new(
+            cert_der.into(),
+            private_key_der,
+            &certificate_request,
+            handshake_context_exporter,
+            finished_key_exporter,
+        );
 
         let encoded = authenticator.encode();
 
         assert_eq!(authenticator, Authenticator::decode(&encoded).unwrap());
 
-        authenticator.verify(&certificate_request).unwrap();
+        authenticator
+            .verify(
+                &certificate_request,
+                &handshake_context_exporter,
+                &finished_key_exporter,
+            )
+            .unwrap();
     }
 
     #[test]

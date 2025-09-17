@@ -8,6 +8,16 @@ use x509_parser::der_parser::oid;
 use x509_parser::error::X509Error;
 use x509_parser::prelude::X509Certificate;
 
+pub static EXPORTER_CLIENT_AUTHENTICATOR_HANDSHAKE_CONTEXT: &[u8] =
+    b"EXPORTER-client authenticator handshake context";
+pub static EXPORTER_SERVER_AUTHENTICATOR_HANDSHAKE_CONTEXT: &[u8] =
+    b"EXPORTER-server authenticator handshake context";
+
+pub static EXPORTER_CLIENT_AUTHENTICATOR_FINISHED_KEY: &[u8] =
+    b"EXPORTER-client authenticator finished key";
+pub static EXPORTER_SERVER_AUTHENTICATOR_FINISHED_KEY: &[u8] =
+    b"EXPORTER-server authenticator finished key";
+
 /// Returns the OID for the cwm attestation
 // TODO #5 replace with the acutal OID for the cwm_attestation extension
 pub fn oid_cwm_attestation() -> Oid<'static> {
