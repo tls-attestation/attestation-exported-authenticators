@@ -1,11 +1,16 @@
 use std::io::{self, Cursor, Read, Write};
 
 use p256::{
-    ecdsa::{signature::Signer, Signature, SigningKey},
+    ecdsa::{
+        signature::{Signer, Verifier},
+        Signature, SigningKey, VerifyingKey,
+    },
     pkcs8::DecodePrivateKey,
+    EncodedPoint,
 };
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use sha2::{Digest, Sha256};
+use x509_parser::prelude::*;
 
 /// An Authenticator as per RFC9261 Exported Authenticators
 #[derive(Debug, PartialEq, Clone)]
@@ -61,8 +66,14 @@ impl Authenticator {
             None => Err("No ceritficate".to_string()),
         }
     }
+
+    pub fn verify(&self) -> Result<(), String> {
+        self.certificate_verify.verify(&self.certificate)
+    }
 }
 
+/// CertificateVerify message as per
+/// https://www.rfc-editor.org/rfc/rfc9261#section-5.2.2
 #[derive(Debug, PartialEq, Clone)]
 struct CertificateVerify {
     signature: Signature,
@@ -70,28 +81,9 @@ struct CertificateVerify {
 
 impl CertificateVerify {
     fn new(certificate: &Certificate, private_key: PrivateKeyDer) -> Self {
-        // TODO#4 this should be the signature
-        // https://www.rfc-editor.org/rfc/rfc9261#section-5.2.2
         // TODO check the encoding is PKCS8
         let signing_key = SigningKey::from_pkcs8_der(private_key.secret_der()).unwrap();
-
-        // The signature is computed using the chosen signature scheme over the concatenation of:
-        // a string that consists of octet 32 (0x20) repeated 64 times,
-        // the context string "Exported Authenticator" (which is not NUL-terminated),
-        // a single 0 octet that serves as the separator,
-        //  and the hashed authenticator transcript.
-        //
-        //  The authenticator transcript is the hash of the concatenated
-        //  Handshake Context, authenticator request (if present), and
-        //  Certificate message:
-        //
-        // Hash(Handshake Context || authenticator request || Certificate)
-        let mut hasher = Sha256::new();
-        // TODO hasher.update(context);
-        // TODO hasher.update(authenticator_request);
-        hasher.update(certificate.encode());
-
-        let message = hasher.finalize();
+        let message = Self::create_certificate_verify_message(certificate);
 
         Self {
             signature: signing_key.sign(&message),
@@ -103,10 +95,65 @@ impl CertificateVerify {
     }
 
     fn decode(input: &[u8]) -> Result<Self, String> {
+        // TODO length prefix
         let signature_bytes: [u8; 64] = input.try_into().map_err(|_| "Bad length".to_string())?;
         Ok(Self {
             signature: Signature::from_bytes(&signature_bytes.into()).map_err(|e| e.to_string())?,
         })
+    }
+
+    fn verify(&self, certificate: &Certificate) -> Result<(), String> {
+        // Extract the public key from the certificate
+        let certificate_entry = certificate.certificate_list.iter().next().unwrap();
+        if let CertificateType::X509(x509_bytes) = &certificate_entry.certificate_type {
+            let (_, cert) = X509Certificate::from_der(&x509_bytes).unwrap();
+            let pk_info = &cert.tbs_certificate.subject_pki.parsed().unwrap();
+            if let x509_parser::public_key::PublicKey::EC(ec_point) = pk_info {
+                let ec_bytes = ec_point.data();
+                let encoded_point = EncodedPoint::from_bytes(ec_bytes).unwrap();
+                let verifying_key = VerifyingKey::from_encoded_point(&encoded_point).unwrap();
+
+                let message = CertificateVerify::create_certificate_verify_message(certificate);
+                verifying_key
+                    .verify(&message, &self.signature)
+                    .map_err(|e| e.to_string())
+            } else {
+                Err("Public key is not P256".to_string())
+            }
+        } else {
+            Err("No X509 Certificate".to_string())
+        }
+    }
+
+    /// Static method to create the message to be signed - this is called in both the contrustor and the verify
+    /// method
+    fn create_certificate_verify_message(certificate: &Certificate) -> Vec<u8> {
+        let mut message = Vec::new();
+
+        // The signature is computed using the chosen signature scheme over the concatenation of:
+        // - A string that consists of octet 32 (0x20) repeated 64 times
+        // - The context string "Exported Authenticator" (which is not NUL-terminated)
+        // - A single 0 octet that serves as the separator
+        // - The hashed authenticator transcript
+
+        message.extend_from_slice(&[0x20; 64]);
+        message.extend_from_slice(b"Exported Authenticator");
+        message.extend_from_slice(&[0; 1]);
+
+        let authentictor_transcript = {
+            // The authenticator transcript is the hash of the concatenated Handshake Context,
+            // authenticator request (if present), and Certificate message:
+            //
+            // Hash(Handshake Context || authenticator request || Certificate)
+            let mut hasher = Sha256::new();
+            // TODO hasher.update(context);
+            // TODO hasher.update(authenticator_request);
+            hasher.update(certificate.encode());
+
+            hasher.finalize()
+        };
+        message.extend_from_slice(&authentictor_transcript);
+        message
     }
 }
 
@@ -368,6 +415,8 @@ mod tests {
         let encoded = authenticator.encode();
 
         assert_eq!(authenticator, Authenticator::decode(&encoded).unwrap());
+
+        authenticator.verify().unwrap();
     }
 
     #[test]
@@ -389,6 +438,24 @@ mod tests {
     fn encode_decode_certificate() {
         let keypair = rcgen::KeyPair::generate().unwrap();
         let cert_der = create_cert_der(&keypair);
+        let entry = CertificateEntry::from_cert_der(cert_der.clone());
+
+        let certificate = Certificate {
+            certificate_request_context: Default::default(),
+            certificate_list: vec![entry],
+        };
+
+        let encoded = certificate.encode();
+        let (decoded_cert, _) = Certificate::decode(&encoded).unwrap();
+
+        assert_eq!(certificate, decoded_cert);
+    }
+
+    #[test]
+    fn encode_decode_certificate_verify() {
+        let keypair = rcgen::KeyPair::generate().unwrap();
+        let cert_der = create_cert_der(&keypair);
+
         let entry = CertificateEntry::from_cert_der(cert_der.clone());
 
         let certificate = Certificate {
