@@ -48,7 +48,7 @@ async fn demonstrate_with_quic_and_tdx() {
 
         let cert_der = create_cert_der(&keypair, Some(&quote));
 
-        let authenticator = Authenticator::new(cert_der.into(), private_key_der);
+        let authenticator = Authenticator::new(cert_der.into(), private_key_der, &cert_request);
 
         send_stream
             .write_all(&authenticator.encode())
@@ -96,6 +96,8 @@ async fn demonstrate_with_quic_and_tdx() {
         let response = recv_stream.read_to_end(65535).await.unwrap();
 
         let authenticator = Authenticator::decode(&response).unwrap();
+
+        assert!(authenticator.verify(&cert_request).is_ok());
 
         let quote_bytes = extract_attestation(&authenticator.cert_der().unwrap()).unwrap();
 

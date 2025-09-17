@@ -13,6 +13,8 @@ use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use sha2::{Digest, Sha256};
 use x509_parser::prelude::*;
 
+use crate::certificate_request::CertificateRequest;
+
 /// An Authenticator as per RFC9261 Exported Authenticators
 #[derive(Debug, PartialEq, Clone)]
 pub struct Authenticator {
@@ -22,7 +24,11 @@ pub struct Authenticator {
 }
 
 impl Authenticator {
-    pub fn new(certificate: CertificateDer, private_key: PrivateKeyDer) -> Self {
+    pub fn new(
+        certificate: CertificateDer,
+        private_key: PrivateKeyDer,
+        certificate_request: &CertificateRequest,
+    ) -> Self {
         let certificate = certificate.to_vec();
         let certificate = Certificate {
             certificate_request_context: Default::default(),
@@ -30,9 +36,11 @@ impl Authenticator {
         };
 
         // TODO this should also take Context and authenticator_request
-        let certificate_verify = CertificateVerify::new(&certificate, private_key);
+        let certificate_verify =
+            CertificateVerify::new(&certificate, private_key, &certificate_request);
 
-        let finished = Finished::new(&certificate, &certificate_verify);
+        // TODO this should also take Context and authenticator_request
+        let finished = Finished::new(&certificate, &certificate_verify, certificate_request);
 
         Self {
             certificate,
@@ -69,8 +77,9 @@ impl Authenticator {
         }
     }
 
-    pub fn verify(&self) -> Result<(), String> {
-        self.certificate_verify.verify(&self.certificate)
+    pub fn verify(&self, certificate_request: &CertificateRequest) -> Result<(), String> {
+        self.certificate_verify
+            .verify(&self.certificate, certificate_request)
     }
 }
 
@@ -82,10 +91,14 @@ struct CertificateVerify {
 }
 
 impl CertificateVerify {
-    fn new(certificate: &Certificate, private_key: PrivateKeyDer) -> Self {
+    fn new(
+        certificate: &Certificate,
+        private_key: PrivateKeyDer,
+        cerificate_request: &CertificateRequest,
+    ) -> Self {
         // TODO check the encoding is PKCS8
         let signing_key = SigningKey::from_pkcs8_der(private_key.secret_der()).unwrap();
-        let message = Self::create_certificate_verify_message(certificate);
+        let message = Self::create_certificate_verify_message(certificate, cerificate_request);
 
         Self {
             signature: signing_key.sign(&message),
@@ -143,7 +156,11 @@ impl CertificateVerify {
     }
 
     /// Verify the signature
-    fn verify(&self, certificate: &Certificate) -> Result<(), String> {
+    fn verify(
+        &self,
+        certificate: &Certificate,
+        cerificate_request: &CertificateRequest,
+    ) -> Result<(), String> {
         // Extract the public key from the certificate
         let certificate_entry = certificate.certificate_list.iter().next().unwrap();
         if let CertificateType::X509(x509_bytes) = &certificate_entry.certificate_type {
@@ -155,7 +172,10 @@ impl CertificateVerify {
                 let encoded_point = EncodedPoint::from_bytes(ec_bytes).unwrap();
                 let verifying_key = VerifyingKey::from_encoded_point(&encoded_point).unwrap();
 
-                let message = CertificateVerify::create_certificate_verify_message(certificate);
+                let message = CertificateVerify::create_certificate_verify_message(
+                    certificate,
+                    cerificate_request,
+                );
                 verifying_key
                     .verify(&message, &self.signature)
                     .map_err(|e| e.to_string())
@@ -169,7 +189,10 @@ impl CertificateVerify {
 
     /// Static method to create the message to be signed - this is called in both the contrustor and the verify
     /// method
-    fn create_certificate_verify_message(certificate: &Certificate) -> Vec<u8> {
+    fn create_certificate_verify_message(
+        certificate: &Certificate,
+        certificate_request: &CertificateRequest,
+    ) -> Vec<u8> {
         let mut message = Vec::new();
 
         // The signature is computed using the chosen signature scheme over the concatenation of:
@@ -189,7 +212,7 @@ impl CertificateVerify {
             // Hash(Handshake Context || authenticator request || Certificate)
             let mut hasher = Sha256::new();
             // TODO hasher.update(context);
-            // TODO hasher.update(authenticator_request);
+            hasher.update(certificate_request.encode());
             hasher.update(certificate.encode());
 
             hasher.finalize()
@@ -209,14 +232,18 @@ struct Finished {
 }
 
 impl Finished {
-    fn new(certificate: &Certificate, certificate_verify: &CertificateVerify) -> Self {
+    fn new(
+        certificate: &Certificate,
+        certificate_verify: &CertificateVerify,
+        certificate_request: &CertificateRequest,
+    ) -> Self {
         // TODO this should be an exported secret
         let key = [0; 32];
 
         let mut mac = Hmac::<Sha256>::new_from_slice(&key).unwrap();
 
         // TODO mac.update(context)
-        // TODO mac.update(authenticator_request)
+        mac.update(&certificate_request.encode());
         mac.update(&certificate.encode());
         mac.update(&certificate_verify.encode());
 
@@ -450,6 +477,7 @@ impl Certificate {
 
 #[cfg(test)]
 mod tests {
+    use rand_core::{OsRng, RngCore};
     use rcgen::CertificateParams;
     use rustls::pki_types::PrivatePkcs8KeyDer;
 
@@ -461,6 +489,16 @@ mod tests {
         cert.der().to_vec()
     }
 
+    fn create_certificate_request() -> CertificateRequest {
+        let mut context = [0u8; 32];
+        OsRng.fill_bytes(&mut context);
+
+        CertificateRequest {
+            certificate_request_context: context.to_vec(),
+            extensions: b"cmw_attestation".to_vec(), // TODO
+        }
+    }
+
     #[test]
     fn encode_decode_authenticator() {
         let keypair = rcgen::KeyPair::generate().unwrap();
@@ -468,13 +506,15 @@ mod tests {
         let private_key_der =
             PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(keypair.serialize_der()));
 
-        let authenticator = Authenticator::new(cert_der.into(), private_key_der);
+        let certificate_request = create_certificate_request();
+        let authenticator =
+            Authenticator::new(cert_der.into(), private_key_der, &certificate_request);
 
         let encoded = authenticator.encode();
 
         assert_eq!(authenticator, Authenticator::decode(&encoded).unwrap());
 
-        authenticator.verify().unwrap();
+        authenticator.verify(&certificate_request).unwrap();
     }
 
     #[test]
