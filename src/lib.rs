@@ -101,6 +101,14 @@ pub enum EncodeError {
     Io(#[from] std::io::Error),
     #[error("Expected at least one certificate")]
     NoCertificate,
+    #[error("Failed to convert secret key: {0}")]
+    PKCS8(#[from] p256::pkcs8::Error),
+    #[error("HMAC: {0}")]
+    HMAC(#[from] hmac::digest::InvalidLength),
+    #[error("Request context length must be less than 255 bytes")]
+    ContextTooLong,
+    #[error("Encoded certificate entry is too long to process")]
+    CertificateEntryTooLong,
 }
 
 #[derive(Error, Debug)]

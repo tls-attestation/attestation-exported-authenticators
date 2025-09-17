@@ -31,7 +31,7 @@ impl CertificateVerify {
         handshake_context_exporter: &[u8; 64],
     ) -> Result<Self, EncodeError> {
         // TODO check the encoding is PKCS8
-        let signing_key = SigningKey::from_pkcs8_der(private_key.secret_der()).unwrap();
+        let signing_key = SigningKey::from_pkcs8_der(private_key.secret_der())?;
         let message = Self::create_certificate_verify_message(
             certificate,
             cerificate_request,
@@ -102,15 +102,21 @@ impl CertificateVerify {
         handshake_context_exporter: &[u8; 64],
     ) -> Result<(), VerificationError> {
         // Extract the public key from the certificate
-        let certificate_entry = certificate.certificate_list.iter().next().unwrap();
-        if let CertificateType::X509(x509_bytes) = &certificate_entry.certificate_type {
-            let (_, cert) = X509Certificate::from_der(&x509_bytes).unwrap();
+        let certificate_entry = certificate
+            .certificate_list
+            .iter()
+            .next()
+            .ok_or(EncodeError::NoCertificate)?;
 
-            let pk_info = &cert.tbs_certificate.subject_pki.parsed().unwrap();
+        if let CertificateType::X509(x509_bytes) = &certificate_entry.certificate_type {
+            let (_, cert) = X509Certificate::from_der(&x509_bytes)?;
+
+            let pk_info = &cert.tbs_certificate.subject_pki.parsed()?;
             if let x509_parser::public_key::PublicKey::EC(ec_point) = pk_info {
                 let ec_bytes = ec_point.data();
-                let encoded_point = EncodedPoint::from_bytes(ec_bytes).unwrap();
-                let verifying_key = VerifyingKey::from_encoded_point(&encoded_point).unwrap();
+                let encoded_point = EncodedPoint::from_bytes(ec_bytes)
+                    .map_err(|_| VerificationError::EncodedPoint)?;
+                let verifying_key = VerifyingKey::from_encoded_point(&encoded_point)?;
 
                 let message = CertificateVerify::create_certificate_verify_message(
                     certificate,
@@ -181,7 +187,7 @@ impl Finished {
         handshake_context_exporter: &[u8; 64],
         finished_key_exporter: &[u8; 32],
     ) -> Result<Self, EncodeError> {
-        let mut mac = Hmac::<Sha256>::new_from_slice(finished_key_exporter).unwrap();
+        let mut mac = Hmac::<Sha256>::new_from_slice(finished_key_exporter)?;
 
         mac.update(handshake_context_exporter);
         mac.update(&certificate_request.encode());
@@ -350,7 +356,7 @@ impl Certificate {
 
         let context_len = self.certificate_request_context.len();
         if context_len > 255 {
-            panic!("certificate_request_context length exceeds 255 bytes.");
+            return Err(EncodeError::ContextTooLong);
         }
         cursor.write_all(&[context_len as u8])?;
         cursor.write_all(&self.certificate_request_context)?;
@@ -366,10 +372,9 @@ impl Certificate {
 
         // Write the 24-bit length prefix for the combined certificate entries
         let certificate_entry_len = encoded_cert_entry.len();
-        assert!(
-            certificate_entry_len < 0x00FFFFFF,
-            "Certificate list too large"
-        );
+        if certificate_entry_len > 0x00FFFFFF {
+            return Err(EncodeError::CertificateEntryTooLong);
+        };
         let len_bytes = [
             (certificate_entry_len >> 16) as u8,
             (certificate_entry_len >> 8) as u8,
@@ -442,6 +447,12 @@ pub enum VerificationError {
     NotP256,
     #[error("Could not verify Finished message")]
     BadFinished,
+    #[error("ASN1 X509: {0}")]
+    Asn1X509(#[from] asn1_rs::Err<X509Error>),
+    #[error("X509: {0}")]
+    X509(#[from] X509Error),
+    #[error("Failed to convert encoded point")]
+    EncodedPoint,
 }
 
 #[cfg(test)]
