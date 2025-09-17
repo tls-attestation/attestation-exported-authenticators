@@ -18,14 +18,12 @@ impl Authenticator {
         certificate: CertificateDer,
         private_key: PrivateKeyDer,
         certificate_request: &CertificateRequest,
-        // The Handshake Context is an exporter value that is derived using the label "EXPORTER-client authenticator handshake context" or "EXPORTER-server authenticator handshake context" for authenticators sent by the client or server, respectively.
         handshake_context_exporter: [u8; 64],
-        // The Finished MAC Key is an exporter value derived using the label "EXPORTER-client authenticator finished key" or "EXPORTER-server authenticator finished key" for authenticators sent by the client or server, respectively.
         finished_key_exporter: [u8; 32],
     ) -> Self {
         let certificate = certificate.to_vec();
         let certificate = Certificate {
-            certificate_request_context: Default::default(),
+            certificate_request_context: certificate_request.certificate_request_context.clone(),
             certificate_list: vec![CertificateEntry::from_cert_der(certificate.to_vec())],
         };
 

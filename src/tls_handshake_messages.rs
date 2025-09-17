@@ -346,6 +346,15 @@ impl Certificate {
         let mut certificate_list_bytes = Vec::new();
         let mut cursor = Cursor::new(&mut certificate_list_bytes);
 
+        let context_len = self.certificate_request_context.len();
+        if context_len > 255 {
+            panic!("certificate_request_context length exceeds 255 bytes.");
+        }
+        cursor.write_all(&[context_len as u8]).unwrap();
+        cursor.write_all(&self.certificate_request_context).unwrap();
+
+        // TODO here we just take the first cert in the list, but we should iterate over all of
+        // them
         let encoded_cert_entry = self.certificate_list.iter().next().unwrap().encode();
 
         // Write the 24-bit length prefix for the combined certificate entries
@@ -359,21 +368,24 @@ impl Certificate {
             (certificate_entry_len >> 8) as u8,
             certificate_entry_len as u8,
         ];
-        cursor
-            .write_all(&len_bytes)
-            .expect("Failed to write certificate list length");
+        cursor.write_all(&len_bytes).unwrap();
 
         // Write the `CertificateEntry` bytes
-        cursor
-            .write_all(&encoded_cert_entry)
-            .expect("Failed to write certificate entry");
+        cursor.write_all(&encoded_cert_entry).unwrap();
 
-        // TODO add request context
         certificate_list_bytes
     }
 
     pub fn decode(input: &[u8]) -> Result<(Self, &[u8]), io::Error> {
         let mut cursor = Cursor::new(input);
+
+        // Read context
+        let mut context_len_bytes = [0; 1];
+        cursor.read_exact(&mut context_len_bytes)?;
+        let context_len: usize = context_len_bytes[0].into();
+
+        let mut certificate_request_context = vec![0u8; context_len];
+        cursor.read_exact(&mut certificate_request_context)?;
 
         // Read the 3-byte length prefix for the certificate list
         let mut cert_list_len_bytes = [0u8; 3];
@@ -398,10 +410,7 @@ impl Certificate {
             ));
         }
 
-        // TODO add context here
-        let certificate_request_context = Vec::new();
-
-        let offset = 3 + cert_list_len;
+        let offset = 1 + context_len + 3 + cert_list_len;
         let remaining_after_list = &input[offset..];
 
         Ok((
@@ -432,13 +441,15 @@ mod tests {
         let cert_der = create_cert_der(&keypair);
         let entry = CertificateEntry::from_cert_der(cert_der.clone());
         let encoded = entry.encode();
-        let (decoded_entry, _) = CertificateEntry::decode(&encoded).unwrap();
+        let (decoded_entry, remaining) = CertificateEntry::decode(&encoded).unwrap();
 
         if let CertificateType::X509(decoded_cert) = decoded_entry.certificate_type {
             assert_eq!(cert_der, decoded_cert);
         } else {
             panic!("Decoded certificate type is not X509");
         }
+
+        assert!(remaining.is_empty());
     }
 
     #[test]
@@ -448,14 +459,15 @@ mod tests {
         let entry = CertificateEntry::from_cert_der(cert_der.clone());
 
         let certificate = Certificate {
-            certificate_request_context: Default::default(),
+            certificate_request_context: b"context".to_vec(),
             certificate_list: vec![entry],
         };
 
         let encoded = certificate.encode();
-        let (decoded_cert, _) = Certificate::decode(&encoded).unwrap();
+        let (decoded_cert, remaining) = Certificate::decode(&encoded).unwrap();
 
         assert_eq!(certificate, decoded_cert);
+        assert!(remaining.is_empty());
     }
 
     #[test]
