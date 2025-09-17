@@ -11,6 +11,7 @@ rcgen = "0.14.3"
 p256 = "0.13.2"
 sha2 = "0.10.9"
 hmac = "0.12.1"
+thiserror = "2.0.16"
 
 [dev-dependencies]
 quinn = "0.11.9"

@@ -70,6 +70,7 @@ dependencies = [
  "rustls",
  "sha2",
  "tdx-quote",
+ "thiserror 2.0.16",
  "tokio",
  "x509-parser",
 ]

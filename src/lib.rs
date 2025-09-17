@@ -5,6 +5,7 @@ mod tls_handshake_messages;
 use asn1_rs::{FromDer, Sequence};
 use asn1_rs::{Oid, ToDer};
 use rcgen::CustomExtension;
+use thiserror::Error;
 use x509_parser::der_parser::oid;
 use x509_parser::error::X509Error;
 use x509_parser::prelude::X509Certificate;
@@ -92,6 +93,26 @@ impl From<asn1_rs::Err<asn1_rs::Error>> for CwmAttestationCertifcateExtensionErr
     fn from(err: asn1_rs::Err<asn1_rs::Error>) -> Self {
         Self::ASN1(err.into())
     }
+}
+
+#[derive(Error, Debug)]
+pub enum EncodeError {
+    #[error("Failed to encode {0}")]
+    Io(#[from] std::io::Error),
+    #[error("Expected at least one certificate")]
+    NoCertificate,
+}
+
+#[derive(Error, Debug)]
+pub enum DecodeError {
+    #[error("Failed to decode {0}")]
+    Io(#[from] std::io::Error),
+    #[error("Bad length: {0}")]
+    BadLength(String),
+    #[error("Unexpected signature scheme: {0}")]
+    BadSignatureScheme(String),
+    #[error("Failed to decode DER signature: {0}")]
+    P256(#[from] p256::ecdsa::Error),
 }
 
 #[cfg(test)]

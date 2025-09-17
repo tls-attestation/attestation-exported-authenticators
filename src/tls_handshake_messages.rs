@@ -11,9 +11,10 @@ use p256::{
 };
 use rustls::pki_types::PrivateKeyDer;
 use sha2::{Digest, Sha256};
+use thiserror::Error;
 use x509_parser::prelude::*;
 
-use crate::certificate_request::CertificateRequest;
+use crate::{certificate_request::CertificateRequest, DecodeError, EncodeError};
 
 /// CertificateVerify message as per
 /// https://www.rfc-editor.org/rfc/rfc9261#section-5.2.2
@@ -28,18 +29,18 @@ impl CertificateVerify {
         private_key: PrivateKeyDer,
         cerificate_request: &CertificateRequest,
         handshake_context_exporter: &[u8; 64],
-    ) -> Self {
+    ) -> Result<Self, EncodeError> {
         // TODO check the encoding is PKCS8
         let signing_key = SigningKey::from_pkcs8_der(private_key.secret_der()).unwrap();
         let message = Self::create_certificate_verify_message(
             certificate,
             cerificate_request,
             handshake_context_exporter,
-        );
+        )?;
 
-        Self {
+        Ok(Self {
             signature: signing_key.sign(&message),
-        }
+        })
     }
 
     pub fn encode(&self) -> Vec<u8> {
@@ -59,25 +60,27 @@ impl CertificateVerify {
         cert_verify_message
     }
 
-    pub fn decode(input: &[u8]) -> Result<(Self, &[u8]), String> {
+    pub fn decode(input: &[u8]) -> Result<(Self, &[u8]), DecodeError> {
         if input.len() < 4 {
-            return Err("Message too short to be a valid CertificateVerify message.".to_string());
+            return Err(DecodeError::BadLength(
+                "Message too short to be a valid CertificateVerify message".to_string(),
+            ));
         }
 
         let signature_scheme = u16::from_be_bytes([input[0], input[1]]);
         if signature_scheme != 0x0403 {
-            return Err(format!(
-                "Unsupported signature scheme: {:x}. Expected ecdsa_secp256r1_sha256 (0x0403).",
+            return Err(DecodeError::BadSignatureScheme(format!(
+                "Unsupported signature scheme: {:x}. Expected ecdsa_secp256r1_sha256 (0x0403)",
                 signature_scheme
-            ));
+            )));
         }
 
         let signature_len = u16::from_be_bytes([input[2], input[3]]) as usize;
         if input.len() < 4 + signature_len {
-            return Err(
+            return Err(DecodeError::BadLength(
                 "Signature length field indicates a length greater than the message size."
                     .to_string(),
-            );
+            ));
         }
 
         let signature_bytes = &input[4..4 + signature_len];
@@ -85,8 +88,7 @@ impl CertificateVerify {
 
         Ok((
             Self {
-                signature: Signature::from_der(signature_bytes)
-                    .map_err(|e| format!("Failed to decode DER signature: {:?}", e))?,
+                signature: Signature::from_der(signature_bytes)?,
             },
             remaining,
         ))
@@ -98,7 +100,7 @@ impl CertificateVerify {
         certificate: &Certificate,
         cerificate_request: &CertificateRequest,
         handshake_context_exporter: &[u8; 64],
-    ) -> Result<(), String> {
+    ) -> Result<(), VerificationError> {
         // Extract the public key from the certificate
         let certificate_entry = certificate.certificate_list.iter().next().unwrap();
         if let CertificateType::X509(x509_bytes) = &certificate_entry.certificate_type {
@@ -114,15 +116,15 @@ impl CertificateVerify {
                     certificate,
                     cerificate_request,
                     handshake_context_exporter,
-                );
-                verifying_key
-                    .verify(&message, &self.signature)
-                    .map_err(|e| e.to_string())
+                )?;
+
+                verifying_key.verify(&message, &self.signature)?;
+                Ok(())
             } else {
-                Err("Public key is not P256".to_string())
+                Err(VerificationError::NotP256)
             }
         } else {
-            Err("No X509 Certificate".to_string())
+            Err(VerificationError::NoCertificate)
         }
     }
 
@@ -132,7 +134,7 @@ impl CertificateVerify {
         certificate: &Certificate,
         certificate_request: &CertificateRequest,
         handshake_context_exporter: &[u8; 64],
-    ) -> Vec<u8> {
+    ) -> Result<Vec<u8>, EncodeError> {
         let mut message = Vec::new();
 
         // The signature is computed using the chosen signature scheme over the concatenation of:
@@ -153,12 +155,12 @@ impl CertificateVerify {
             let mut hasher = Sha256::new();
             hasher.update(handshake_context_exporter);
             hasher.update(certificate_request.encode());
-            hasher.update(certificate.encode());
+            hasher.update(certificate.encode()?);
 
             hasher.finalize()
         };
         message.extend_from_slice(&authentictor_transcript);
-        message
+        Ok(message)
     }
 }
 
@@ -178,28 +180,28 @@ impl Finished {
         certificate_request: &CertificateRequest,
         handshake_context_exporter: &[u8; 64],
         finished_key_exporter: &[u8; 32],
-    ) -> Self {
+    ) -> Result<Self, EncodeError> {
         let mut mac = Hmac::<Sha256>::new_from_slice(finished_key_exporter).unwrap();
 
         mac.update(handshake_context_exporter);
         mac.update(&certificate_request.encode());
-        mac.update(&certificate.encode());
+        mac.update(&certificate.encode()?);
         mac.update(&certificate_verify.encode());
 
         let hmac = mac.finalize();
-        Self {
+        Ok(Self {
             hmac: hmac.into_bytes().to_vec(),
-        }
+        })
     }
 
     pub fn encode(&self) -> Vec<u8> {
         self.hmac.clone()
     }
 
-    pub fn decode(input: &[u8]) -> Self {
-        Self {
+    pub fn decode(input: &[u8]) -> Result<Self, DecodeError> {
+        Ok(Self {
             hmac: input.to_vec(),
-        }
+        })
     }
 }
 
@@ -342,7 +344,7 @@ pub struct Certificate {
 }
 
 impl Certificate {
-    pub fn encode(&self) -> Vec<u8> {
+    pub fn encode(&self) -> Result<Vec<u8>, EncodeError> {
         let mut certificate_list_bytes = Vec::new();
         let mut cursor = Cursor::new(&mut certificate_list_bytes);
 
@@ -350,12 +352,17 @@ impl Certificate {
         if context_len > 255 {
             panic!("certificate_request_context length exceeds 255 bytes.");
         }
-        cursor.write_all(&[context_len as u8]).unwrap();
-        cursor.write_all(&self.certificate_request_context).unwrap();
+        cursor.write_all(&[context_len as u8])?;
+        cursor.write_all(&self.certificate_request_context)?;
 
         // TODO here we just take the first cert in the list, but we should iterate over all of
         // them
-        let encoded_cert_entry = self.certificate_list.iter().next().unwrap().encode();
+        let encoded_cert_entry = self
+            .certificate_list
+            .iter()
+            .next()
+            .ok_or(EncodeError::NoCertificate)?
+            .encode();
 
         // Write the 24-bit length prefix for the combined certificate entries
         let certificate_entry_len = encoded_cert_entry.len();
@@ -368,15 +375,15 @@ impl Certificate {
             (certificate_entry_len >> 8) as u8,
             certificate_entry_len as u8,
         ];
-        cursor.write_all(&len_bytes).unwrap();
+        cursor.write_all(&len_bytes)?;
 
         // Write the `CertificateEntry` bytes
-        cursor.write_all(&encoded_cert_entry).unwrap();
+        cursor.write_all(&encoded_cert_entry)?;
 
-        certificate_list_bytes
+        Ok(certificate_list_bytes)
     }
 
-    pub fn decode(input: &[u8]) -> Result<(Self, &[u8]), io::Error> {
+    pub fn decode(input: &[u8]) -> Result<(Self, &[u8]), DecodeError> {
         let mut cursor = Cursor::new(input);
 
         // Read context
@@ -399,16 +406,16 @@ impl Certificate {
         cursor.read_exact(&mut cert_list_data)?;
 
         // Decode the single CertificateEntry from the list data and get the remaining bytes
-        let (certificate_entry, remaining_in_list) = CertificateEntry::decode(&cert_list_data)?;
+        let (certificate_entry, _remaining) = CertificateEntry::decode(&cert_list_data)?;
         let certificate_list = vec![certificate_entry];
 
-        // Ensure there are no leftover bytes within the certificate list data itself
-        if !remaining_in_list.is_empty() {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "Unexpected bytes in certificate list",
-            ));
-        }
+        // // Ensure there are no leftover bytes within the certificate list data itself
+        // if !remaining_in_list.is_empty() {
+        //     return Err(io::Error::new(
+        //         io::ErrorKind::InvalidData,
+        //         "Unexpected bytes in certificate list",
+        //     ));
+        // }
 
         let offset = 1 + context_len + 3 + cert_list_len;
         let remaining_after_list = &input[offset..];
@@ -421,6 +428,20 @@ impl Certificate {
             remaining_after_list,
         ))
     }
+}
+
+#[derive(Error, Debug)]
+pub enum VerificationError {
+    #[error("Signature verification: {0}")]
+    Io(#[from] p256::ecdsa::Error),
+    #[error("No X509 certificate")]
+    NoCertificate,
+    #[error("Encode: {0}")]
+    Encode(#[from] EncodeError),
+    #[error("Only P256 signatures currently supported")]
+    NotP256,
+    #[error("Could not verify Finished message")]
+    BadFinished,
 }
 
 #[cfg(test)]
@@ -463,7 +484,7 @@ mod tests {
             certificate_list: vec![entry],
         };
 
-        let encoded = certificate.encode();
+        let encoded = certificate.encode().unwrap();
         let (decoded_cert, remaining) = Certificate::decode(&encoded).unwrap();
 
         assert_eq!(certificate, decoded_cert);
@@ -482,7 +503,7 @@ mod tests {
             certificate_list: vec![entry],
         };
 
-        let encoded = certificate.encode();
+        let encoded = certificate.encode().unwrap();
         let (decoded_cert, _) = Certificate::decode(&encoded).unwrap();
 
         assert_eq!(certificate, decoded_cert);

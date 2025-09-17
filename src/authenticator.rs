@@ -2,7 +2,10 @@ use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 
 use crate::{
     certificate_request::CertificateRequest,
-    tls_handshake_messages::{Certificate, CertificateEntry, CertificateVerify, Finished},
+    tls_handshake_messages::{
+        Certificate, CertificateEntry, CertificateVerify, Finished, VerificationError,
+    },
+    DecodeError, EncodeError,
 };
 
 /// An Authenticator as per RFC9261 Exported Authenticators
@@ -20,7 +23,7 @@ impl Authenticator {
         certificate_request: &CertificateRequest,
         handshake_context_exporter: [u8; 64],
         finished_key_exporter: [u8; 32],
-    ) -> Self {
+    ) -> Result<Self, EncodeError> {
         let certificate = certificate.to_vec();
         let certificate = Certificate {
             certificate_request_context: certificate_request.certificate_request_context.clone(),
@@ -32,7 +35,7 @@ impl Authenticator {
             private_key,
             &certificate_request,
             &handshake_context_exporter,
-        );
+        )?;
 
         let finished = Finished::new(
             &certificate,
@@ -40,33 +43,33 @@ impl Authenticator {
             certificate_request,
             &handshake_context_exporter,
             &finished_key_exporter,
-        );
+        )?;
 
-        Self {
+        Ok(Self {
             certificate,
             certificate_verify,
             finished,
-        }
+        })
     }
 
     /// Serialize to bytes
     /// Certificate || CertificateVerify || Finished
-    pub fn encode(&self) -> Vec<u8> {
+    pub fn encode(&self) -> Result<Vec<u8>, EncodeError> {
         let mut output = Vec::new();
-        output.extend_from_slice(&self.certificate.encode());
+        output.extend_from_slice(&self.certificate.encode()?);
         output.extend_from_slice(&self.certificate_verify.encode());
         output.extend_from_slice(&self.finished.encode());
-        output
+        Ok(output)
     }
 
     /// Deserialize from bytes
-    pub fn decode(input: &[u8]) -> Result<Self, ()> {
-        let (certificate, input) = Certificate::decode(&input).unwrap();
-        let (certificate_verify, input) = CertificateVerify::decode(&input).unwrap();
+    pub fn decode(input: &[u8]) -> Result<Self, DecodeError> {
+        let (certificate, input) = Certificate::decode(&input)?;
+        let (certificate_verify, input) = CertificateVerify::decode(&input)?;
         Ok(Self {
             certificate,
             certificate_verify,
-            finished: Finished::decode(input),
+            finished: Finished::decode(input)?,
         })
     }
 
@@ -82,16 +85,17 @@ impl Authenticator {
         certificate_request: &CertificateRequest,
         handshake_context_exporter: &[u8; 64],
         finished_key_exporter: &[u8; 32],
-    ) -> Result<(), String> {
+    ) -> Result<(), VerificationError> {
         let finished_check = Finished::new(
             &self.certificate,
             &self.certificate_verify,
             certificate_request,
             handshake_context_exporter,
             finished_key_exporter,
-        );
+        )?;
+
         if finished_check != self.finished {
-            return Err("Could not verify Finished message".to_string());
+            return Err(VerificationError::BadFinished);
         }
 
         self.certificate_verify.verify(
@@ -144,9 +148,10 @@ mod tests {
             &certificate_request,
             handshake_context_exporter,
             finished_key_exporter,
-        );
+        )
+        .unwrap();
 
-        let encoded = authenticator.encode();
+        let encoded = authenticator.encode().unwrap();
 
         assert_eq!(authenticator, Authenticator::decode(&encoded).unwrap());
 

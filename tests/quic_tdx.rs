@@ -71,10 +71,11 @@ async fn demonstrate_with_quic_and_tdx() {
             &cert_request,
             handshake_context_exporter,
             finished_key_exporter,
-        );
+        )
+        .unwrap();
 
         send_stream
-            .write_all(&authenticator.encode())
+            .write_all(&authenticator.encode().unwrap())
             .await
             .unwrap();
         send_stream.finish().unwrap(); // Close the send side of the stream
