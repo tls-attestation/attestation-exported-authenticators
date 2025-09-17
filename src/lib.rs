@@ -1,5 +1,6 @@
 pub mod authenticator;
 pub mod certificate_request;
+mod tls_handshake_messages;
 
 use asn1_rs::{FromDer, Sequence};
 use asn1_rs::{Oid, ToDer};
