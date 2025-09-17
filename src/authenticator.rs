@@ -1,5 +1,6 @@
 use std::io::{self, Cursor, Read, Write};
 
+use hmac::{Hmac, Mac};
 use p256::{
     ecdsa::{
         signature::{Signer, Verifier},
@@ -22,20 +23,21 @@ pub struct Authenticator {
 
 impl Authenticator {
     pub fn new(certificate: CertificateDer, private_key: PrivateKeyDer) -> Self {
-        // TODO#4 this should be encoded as a cert chain with length prefix:
-        // https://www.rfc-editor.org/rfc/rfc8446#section-4.4.2
         let certificate = certificate.to_vec();
         let certificate = Certificate {
             certificate_request_context: Default::default(),
             certificate_list: vec![CertificateEntry::from_cert_der(certificate.to_vec())],
         };
 
+        // TODO this should also take Context and authenticator_request
         let certificate_verify = CertificateVerify::new(&certificate, private_key);
+
+        let finished = Finished::new(&certificate, &certificate_verify);
 
         Self {
             certificate,
             certificate_verify,
-            finished: Finished::new(),
+            finished,
         }
     }
 
@@ -51,12 +53,12 @@ impl Authenticator {
 
     /// Deserialize from bytes
     pub fn decode(input: &[u8]) -> Result<Self, ()> {
-        // TODO this should actually parse all values
         let (certificate, input) = Certificate::decode(&input).unwrap();
+        let (certificate_verify, input) = CertificateVerify::decode(&input).unwrap();
         Ok(Self {
             certificate,
-            certificate_verify: CertificateVerify::decode(&input).unwrap(), // TODO parse this with length prefix
-            finished: Finished::decode(&[]),
+            certificate_verify,
+            finished: Finished::decode(input),
         })
     }
 
@@ -91,22 +93,62 @@ impl CertificateVerify {
     }
 
     fn encode(&self) -> Vec<u8> {
-        self.signature.to_vec()
+        let mut cert_verify_message = Vec::new();
+
+        // SignatureScheme for ecdsa_secp256r1_sha256
+        cert_verify_message.extend_from_slice(&[0x04, 0x03]);
+
+        let der_signature = self.signature.to_der();
+        let signature_bytes = der_signature.as_bytes();
+
+        // Add length prefix
+        cert_verify_message.extend_from_slice(&(signature_bytes.len() as u16).to_be_bytes());
+
+        cert_verify_message.extend_from_slice(signature_bytes);
+
+        cert_verify_message
     }
 
-    fn decode(input: &[u8]) -> Result<Self, String> {
-        // TODO length prefix
-        let signature_bytes: [u8; 64] = input.try_into().map_err(|_| "Bad length".to_string())?;
-        Ok(Self {
-            signature: Signature::from_bytes(&signature_bytes.into()).map_err(|e| e.to_string())?,
-        })
+    fn decode(input: &[u8]) -> Result<(Self, &[u8]), String> {
+        if input.len() < 4 {
+            return Err("Message too short to be a valid CertificateVerify message.".to_string());
+        }
+
+        let signature_scheme = u16::from_be_bytes([input[0], input[1]]);
+        if signature_scheme != 0x0403 {
+            return Err(format!(
+                "Unsupported signature scheme: {:x}. Expected ecdsa_secp256r1_sha256 (0x0403).",
+                signature_scheme
+            ));
+        }
+
+        let signature_len = u16::from_be_bytes([input[2], input[3]]) as usize;
+        if input.len() < 4 + signature_len {
+            return Err(
+                "Signature length field indicates a length greater than the message size."
+                    .to_string(),
+            );
+        }
+
+        let signature_bytes = &input[4..4 + signature_len];
+        let remaining = &input[4 + signature_len..];
+
+        Ok((
+            Self {
+                signature: Signature::from_der(signature_bytes)
+                    .map_err(|e| format!("Failed to decode DER signature: {:?}", e))?,
+            },
+            remaining,
+        ))
     }
 
+    /// Verify the signature
     fn verify(&self, certificate: &Certificate) -> Result<(), String> {
         // Extract the public key from the certificate
         let certificate_entry = certificate.certificate_list.iter().next().unwrap();
         if let CertificateType::X509(x509_bytes) = &certificate_entry.certificate_type {
             let (_, cert) = X509Certificate::from_der(&x509_bytes).unwrap();
+
             let pk_info = &cert.tbs_certificate.subject_pki.parsed().unwrap();
             if let x509_parser::public_key::PublicKey::EC(ec_point) = pk_info {
                 let ec_bytes = ec_point.data();
@@ -160,22 +202,38 @@ impl CertificateVerify {
 /// The Finished message which is:
 ///
 /// HMAC(Finished MAC Key, Hash(Handshake Context || authenticator request || Certificate || CertificateVerify))
+// TODO this should be wrapped in a HandshakeMessage with type (0x14) and length (3 bytes)
 #[derive(Debug, PartialEq, Clone)]
-struct Finished {}
+struct Finished {
+    hmac: Vec<u8>,
+}
 
 impl Finished {
-    fn new() -> Self {
-        // TODO#4 this should be:
-        // let finished = Default::default();
-        Self {}
+    fn new(certificate: &Certificate, certificate_verify: &CertificateVerify) -> Self {
+        // TODO this should be an exported secret
+        let key = [0; 32];
+
+        let mut mac = Hmac::<Sha256>::new_from_slice(&key).unwrap();
+
+        // TODO mac.update(context)
+        // TODO mac.update(authenticator_request)
+        mac.update(&certificate.encode());
+        mac.update(&certificate_verify.encode());
+
+        let hmac = mac.finalize();
+        Self {
+            hmac: hmac.into_bytes().to_vec(),
+        }
     }
 
     fn encode(&self) -> Vec<u8> {
-        Vec::new()
+        self.hmac.clone()
     }
 
-    fn decode(_input: &[u8]) -> Self {
-        Self {}
+    fn decode(input: &[u8]) -> Self {
+        Self {
+            hmac: input.to_vec(),
+        }
     }
 }
 
