@@ -20,24 +20,12 @@ use x509_parser::prelude::*;
 
 use crate::{certificate_request::CertificateRequest, DecodeError, EncodeError};
 
-fn usize_to_uint24_bytes(value: usize) -> Result<[u8; 3], EncodeError> {
-    if value > 0xFFFFFF {
-        return Err(EncodeError::TooLong);
-    }
-    let full_bytes = (value as u32).to_be_bytes();
-    Ok([full_bytes[1], full_bytes[2], full_bytes[3]])
-}
-
-fn uint24_bytes_to_usize(bytes: [u8; 3]) -> usize {
-    let full_bytes: [u8; 4] = [0u8, bytes[0], bytes[1], bytes[2]];
-    let value = u32::from_be_bytes(full_bytes);
-    value as usize
-}
-
+/// Represents the different possible handshake message types
+// Dead code allowed because not all variants are constructed
 #[allow(dead_code)]
 #[derive(Debug, PartialEq, Eq, Clone)]
 #[repr(u8)]
-pub enum HandshakeMessageType {
+enum HandshakeMessageType {
     ClientHello = 1,
     ServerHello = 2,
     NewSessionTicket = 4,
@@ -68,7 +56,9 @@ impl TryFrom<u8> for HandshakeMessageType {
 
 /// A HandShakeMessage wrapper as per RFC8448
 struct HandShakeMessage {
+    /// Which of the handshake messages this is
     handshake_type: HandshakeMessageType,
+    /// The encoded handshake message
     payload: Vec<u8>,
 }
 
@@ -588,6 +578,22 @@ pub enum VerificationError {
     X509(#[from] X509Error),
     #[error("Failed to convert encoded point")]
     EncodedPoint,
+}
+
+/// Helper for creating uint24 for length prefix
+fn usize_to_uint24_bytes(value: usize) -> Result<[u8; 3], EncodeError> {
+    if value > 0xFFFFFF {
+        return Err(EncodeError::TooLong);
+    }
+    let full_bytes = (value as u32).to_be_bytes();
+    Ok([full_bytes[1], full_bytes[2], full_bytes[3]])
+}
+
+/// Helper for decoding uint24 for length prefix
+fn uint24_bytes_to_usize(bytes: [u8; 3]) -> usize {
+    let full_bytes: [u8; 4] = [0u8, bytes[0], bytes[1], bytes[2]];
+    let value = u32::from_be_bytes(full_bytes);
+    value as usize
 }
 
 #[cfg(test)]
