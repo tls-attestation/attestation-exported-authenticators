@@ -152,6 +152,9 @@ impl CertificateVerify {
         // - The context string "Exported Authenticator" (which is not NUL-terminated)
         // - A single 0 octet that serves as the separator
         // - The hashed authenticator transcript
+        //
+        // As per RFC9261 Section 5.5.2
+        // https://www.rfc-editor.org/rfc/rfc9261#name-certificateverify
 
         message.extend_from_slice(&[0x20; 64]);
         message.extend_from_slice(b"Exported Authenticator");
