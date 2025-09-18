@@ -76,7 +76,7 @@ impl Authenticator {
     pub fn cert_der(&self) -> Result<Vec<u8>, String> {
         match self.certificate.certificate_list.iter().next() {
             Some(certificate_entry) => certificate_entry.as_cert_der(),
-            None => Err("No ceritficate".to_string()),
+            None => Err("No certificate".to_string()),
         }
     }
 
