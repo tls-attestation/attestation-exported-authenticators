@@ -20,6 +20,102 @@ use x509_parser::prelude::*;
 
 use crate::{certificate_request::CertificateRequest, DecodeError, EncodeError};
 
+fn usize_to_uint24_bytes(value: usize) -> Result<[u8; 3], EncodeError> {
+    if value > 0xFFFFFF {
+        return Err(EncodeError::TooLong);
+    }
+    let full_bytes = (value as u32).to_be_bytes();
+    Ok([full_bytes[1], full_bytes[2], full_bytes[3]])
+}
+
+fn uint24_bytes_to_usize(bytes: [u8; 3]) -> usize {
+    let full_bytes: [u8; 4] = [0u8, bytes[0], bytes[1], bytes[2]];
+    let value = u32::from_be_bytes(full_bytes);
+    value as usize
+}
+
+#[allow(dead_code)]
+#[derive(Debug, PartialEq, Eq, Clone)]
+#[repr(u8)]
+pub enum HandshakeMessageType {
+    ClientHello = 1,
+    ServerHello = 2,
+    NewSessionTicket = 4,
+    EndOfEarlyData = 5,
+    EncryptedExtensions = 8,
+    Certificate = 11,
+    CertificateRequest = 13,
+    CertificateVerify = 15,
+    Finished = 20,
+    KeyUpdate = 24,
+    MessageHash = 254,
+}
+
+impl TryFrom<u8> for HandshakeMessageType {
+    type Error = DecodeError;
+
+    fn try_from(value: u8) -> Result<Self, Self::Error> {
+        match value {
+            1 => Ok(HandshakeMessageType::ClientHello),
+            2 => Ok(HandshakeMessageType::ServerHello),
+            11 => Ok(HandshakeMessageType::Certificate),
+            15 => Ok(HandshakeMessageType::CertificateVerify),
+            20 => Ok(HandshakeMessageType::Finished),
+            _ => Err(DecodeError::UnknownMessageType),
+        }
+    }
+}
+
+/// A HandShakeMessage wrapper as per RFC8448
+struct HandShakeMessage {
+    handshake_type: HandshakeMessageType,
+    payload: Vec<u8>,
+}
+
+impl HandShakeMessage {
+    fn new_certificate(payload: Vec<u8>) -> Self {
+        Self {
+            handshake_type: HandshakeMessageType::Certificate,
+            payload,
+        }
+    }
+
+    fn new_certificate_verify(payload: Vec<u8>) -> Self {
+        Self {
+            handshake_type: HandshakeMessageType::CertificateVerify,
+            payload,
+        }
+    }
+
+    fn encode(&self) -> Result<Vec<u8>, EncodeError> {
+        let mut output = Vec::new();
+        output.extend_from_slice(&[self.handshake_type.clone() as u8]);
+        let payload_length = usize_to_uint24_bytes(self.payload.len())?;
+        output.extend_from_slice(&payload_length);
+        output.extend_from_slice(&self.payload);
+        Ok(output)
+    }
+
+    fn decode(input: &[u8]) -> Result<(Self, &[u8]), DecodeError> {
+        if input.len() < 4 {
+            return Err(DecodeError::BadLength(
+                "Message too short to be a valid Handshake message".to_string(),
+            ));
+        }
+        let handshake_type = input[0].try_into()?;
+        let payload_length = uint24_bytes_to_usize(input[1..4].try_into().unwrap());
+        let payload = &input[4..4 + payload_length]; // TODO this will panic - use cursor
+        let remaining = &input[4 + payload_length..];
+        Ok((
+            Self {
+                handshake_type,
+                payload: payload.to_vec(),
+            },
+            remaining,
+        ))
+    }
+}
+
 /// CertificateVerify message as per
 /// https://www.rfc-editor.org/rfc/rfc9261#section-5.2.2
 #[derive(Debug, PartialEq, Clone)]
@@ -47,7 +143,7 @@ impl CertificateVerify {
         })
     }
 
-    pub fn encode(&self) -> Vec<u8> {
+    pub fn encode(&self) -> Result<Vec<u8>, EncodeError> {
         let mut cert_verify_message = Vec::new();
 
         // SignatureScheme for ecdsa_secp256r1_sha256
@@ -61,10 +157,15 @@ impl CertificateVerify {
 
         cert_verify_message.extend_from_slice(signature_bytes);
 
-        cert_verify_message
+        let handshake_message = HandShakeMessage::new_certificate_verify(cert_verify_message);
+        handshake_message.encode()
     }
 
     pub fn decode(input: &[u8]) -> Result<(Self, &[u8]), DecodeError> {
+        let (handshake_message, remaining) = HandShakeMessage::decode(input)?;
+        let input = handshake_message.payload;
+        // TODO check the message type
+
         if input.len() < 4 {
             return Err(DecodeError::BadLength(
                 "Message too short to be a valid CertificateVerify message".to_string(),
@@ -87,7 +188,7 @@ impl CertificateVerify {
         }
 
         let signature_bytes = &input[4..4 + signature_len];
-        let remaining = &input[4 + signature_len..];
+        // let remaining = &input[4 + signature_len..];
 
         Ok((
             Self {
@@ -197,7 +298,7 @@ impl Finished {
         mac.update(handshake_context_exporter);
         mac.update(&certificate_request.encode());
         mac.update(&certificate.encode()?);
-        mac.update(&certificate_verify.encode());
+        mac.update(&certificate_verify.encode()?);
 
         let hmac = mac.finalize();
         Ok(Self {
@@ -389,11 +490,14 @@ impl Certificate {
         // Write the `CertificateEntry` bytes
         cursor.write_all(&encoded_cert_entry)?;
 
-        Ok(certificate_list_bytes)
+        let handshake_message = HandShakeMessage::new_certificate(certificate_list_bytes);
+        handshake_message.encode()
     }
 
     pub fn decode(input: &[u8]) -> Result<(Self, &[u8]), DecodeError> {
-        let mut cursor = Cursor::new(input);
+        let (handshake_message, remaining) = HandShakeMessage::decode(input)?;
+        // TODO check the message type
+        let mut cursor = Cursor::new(handshake_message.payload);
 
         // Read context
         let mut context_len_bytes = [0; 1];
@@ -426,15 +530,15 @@ impl Certificate {
         //     ));
         // }
 
-        let offset = 1 + context_len + 3 + cert_list_len;
-        let remaining_after_list = &input[offset..];
+        // let offset = 1 + context_len + 3 + cert_list_len;
+        // let remaining_after_list = &[offset..];
 
         Ok((
             Certificate {
                 certificate_request_context,
                 certificate_list,
             },
-            remaining_after_list,
+            remaining,
         ))
     }
 }
@@ -469,6 +573,68 @@ mod tests {
         let params = CertificateParams::new(["localhost".to_string()]).unwrap();
         let cert = params.self_signed(keypair).unwrap();
         cert.der().to_vec()
+    }
+
+    fn hex_string_to_bytes(hex_string: &str) -> Vec<u8> {
+        let cleaned_hex = hex_string.split_whitespace().collect::<String>();
+        hex::decode(cleaned_hex).unwrap()
+    }
+
+    #[test]
+    fn decode_certificate() {
+        // Test data from RFC8448
+        let cert_hex = r#"0b 00 01 b9 00 00 01 b5 00 01 b0 30 82
+        01 ac 30 82 01 15 a0 03 02 01 02 02 01 02 30 0d 06 09 2a 86 48
+        86 f7 0d 01 01 0b 05 00 30 0e 31 0c 30 0a 06 03 55 04 03 13 03
+        72 73 61 30 1e 17 0d 31 36 30 37 33 30 30 31 32 33 35 39 5a 17
+        0d 32 36 30 37 33 30 30 31 32 33 35 39 5a 30 0e 31 0c 30 0a 06
+        03 55 04 03 13 03 72 73 61 30 81 9f 30 0d 06 09 2a 86 48 86 f7
+        0d 01 01 01 05 00 03 81 8d 00 30 81 89 02 81 81 00 b4 bb 49 8f
+        82 79 30 3d 98 08 36 39 9b 36 c6 98 8c 0c 68 de 55 e1 bd b8 26
+        d3 90 1a 24 61 ea fd 2d e4 9a 91 d0 15 ab bc 9a 95 13 7a ce 6c
+        1a f1 9e aa 6a f9 8c 7c ed 43 12 09 98 e1 87 a8 0e e0 cc b0 52
+        4b 1b 01 8c 3e 0b 63 26 4d 44 9a 6d 38 e2 2a 5f da 43 08 46 74
+        80 30 53 0e f0 46 1c 8c a9 d9 ef bf ae 8e a6 d1 d0 3e 2b d1 93
+        ef f0 ab 9a 80 02 c4 74 28 a6 d3 5a 8d 88 d7 9f 7f 1e 3f 02 03
+        01 00 01 a3 1a 30 18 30 09 06 03 55 1d 13 04 02 30 00 30 0b 06
+        03 55 1d 0f 04 04 03 02 05 a0 30 0d 06 09 2a 86 48 86 f7 0d 01
+        01 0b 05 00 03 81 81 00 85 aa d2 a0 e5 b9 27 6b 90 8c 65 f7 3a
+        72 67 17 06 18 a5 4c 5f 8a 7b 33 7d 2d f7 a5 94 36 54 17 f2 ea
+        e8 f8 a5 8c 8f 81 72 f9 31 9c f3 6b 7f d6 c5 5b 80 f2 1a 03 01
+        51 56 72 60 96 fd 33 5e 5e 67 f2 db f1 02 70 2e 60 8c ca e6 be
+        c1 fc 63 a4 2a 99 be 5c 3e b7 10 7c 3c 54 e9 b9 eb 2b d5 20 3b
+        1c 3b 84 e0 a8 b2 f7 59 40 9b a3 ea c9 d9 1d 40 2d cc 0c c8 f8
+        96 12 29 ac 91 87 b4 2b 4d e1 00 00"#;
+        let cert_bytes = hex_string_to_bytes(cert_hex);
+
+        println!("{}", cert_bytes.len());
+
+        let (_decoded_entry, remaining) = Certificate::decode(&cert_bytes).unwrap();
+
+        assert!(remaining.is_empty());
+    }
+
+    // TODO this uses rsa_pss_rsae_sha256 - and we currently only support p256
+    // which is why this test is ignored
+    #[ignore]
+    #[test]
+    fn decode_certificate_verify() {
+        // Test data from RFC8448
+        let certificate_verify_hex = r#"0f 00 00 84 08 04 00 80 5a 74 7c
+         5d 88 fa 9b d2 e5 5a b0 85 a6 10 15 b7 21 1f 82 4c d4 84 14 5a
+         b3 ff 52 f1 fd a8 47 7b 0b 7a bc 90 db 78 e2 d3 3a 5c 14 1a 07
+         86 53 fa 6b ef 78 0c 5e a2 48 ee aa a7 85 c4 f3 94 ca b6 d3 0b
+         be 8d 48 59 ee 51 1f 60 29 57 b1 54 11 ac 02 76 71 45 9e 46 44
+         5c 9e a5 8c 18 1e 81 8e 95 b8 c3 fb 0b f3 27 84 09 d3 be 15 2a
+         3d a5 04 3e 06 3d da 65 cd f5 ae a2 0d 53 df ac d4 2f 74 f3"#;
+
+        let cert_bytes = hex_string_to_bytes(certificate_verify_hex);
+
+        println!("{}", cert_bytes.len());
+
+        let (_decoded_entry, remaining) = CertificateVerify::decode(&cert_bytes).unwrap();
+
+        assert!(remaining.is_empty());
     }
 
     #[test]

@@ -109,6 +109,8 @@ pub enum EncodeError {
     ContextTooLong,
     #[error("Encoded certificate entry is too long to process")]
     CertificateEntryTooLong,
+    #[error("Length must be less than 2^24-1 bytes")]
+    TooLong,
 }
 
 #[derive(Error, Debug)]
@@ -121,6 +123,8 @@ pub enum DecodeError {
     BadSignatureScheme(String),
     #[error("Failed to decode DER signature: {0}")]
     P256(#[from] p256::ecdsa::Error),
+    #[error("Bad message type")]
+    UnknownMessageType,
 }
 
 #[cfg(test)]

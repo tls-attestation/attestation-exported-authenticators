@@ -57,7 +57,7 @@ impl Authenticator {
     pub fn encode(&self) -> Result<Vec<u8>, EncodeError> {
         let mut output = Vec::new();
         output.extend_from_slice(&self.certificate.encode()?);
-        output.extend_from_slice(&self.certificate_verify.encode());
+        output.extend_from_slice(&self.certificate_verify.encode()?);
         output.extend_from_slice(&self.finished.encode());
         Ok(output)
     }
