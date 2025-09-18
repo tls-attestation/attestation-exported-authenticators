@@ -639,23 +639,17 @@ mod tests {
         assert!(remaining.is_empty());
     }
 
-    // TODO this uses rsa_pss_rsae_sha256 - and we currently only support p256
-    // which is why this test is ignored
-    #[ignore]
     #[test]
     fn decode_certificate_verify() {
         // Test data from RFC8448
-        let certificate_verify_hex = r#"0f 00 00 84 08 04 00 80 5a 74 7c
-         5d 88 fa 9b d2 e5 5a b0 85 a6 10 15 b7 21 1f 82 4c d4 84 14 5a
-         b3 ff 52 f1 fd a8 47 7b 0b 7a bc 90 db 78 e2 d3 3a 5c 14 1a 07
-         86 53 fa 6b ef 78 0c 5e a2 48 ee aa a7 85 c4 f3 94 ca b6 d3 0b
-         be 8d 48 59 ee 51 1f 60 29 57 b1 54 11 ac 02 76 71 45 9e 46 44
-         5c 9e a5 8c 18 1e 81 8e 95 b8 c3 fb 0b f3 27 84 09 d3 be 15 2a
-         3d a5 04 3e 06 3d da 65 cd f5 ae a2 0d 53 df ac d4 2f 74 f3"#;
-
+        let certificate_verify_hex = r#"0f 00 00 4b 04 03 00 47 30 45 02
+         21 00 d7 a4 d3 4b d5 4f 55 fe e1 a8 96 25 67 8c 3d d5 e5 f6 0d
+         ac 73 ec 94 0c 5c 7b 93 04 a0 20 84 a9 02 20 28 9f 59 5e d4 88
+         b9 ac 68 9a 3d 19 2b 1a 8b b3 8f 34 af 78 74 c0 59 c9 80 6a 1f
+         38 26 93 53 e8"#;
         let cert_bytes = hex_string_to_bytes(certificate_verify_hex);
 
-        let (_decoded_entry, remaining) = CertificateVerify::decode(&cert_bytes).unwrap();
+        let (_certificate_verify, remaining) = CertificateVerify::decode(&cert_bytes).unwrap();
 
         assert!(remaining.is_empty());
     }
@@ -669,7 +663,9 @@ mod tests {
 
         let finished_bytes = hex_string_to_bytes(finished_hex);
 
-        let _decoded = Finished::decode(&finished_bytes).unwrap();
+        let (_decoded, remaining) = Finished::decode(&finished_bytes).unwrap();
+
+        assert!(remaining.is_empty());
     }
 
     #[test]
