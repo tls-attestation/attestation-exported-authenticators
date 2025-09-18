@@ -125,6 +125,8 @@ pub enum DecodeError {
     P256(#[from] p256::ecdsa::Error),
     #[error("Bad message type")]
     UnknownMessageType,
+    #[error("Unexpected message type")]
+    UnexpectedMessageType,
 }
 
 #[cfg(test)]

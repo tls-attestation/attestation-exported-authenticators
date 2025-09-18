@@ -87,6 +87,13 @@ impl HandShakeMessage {
         }
     }
 
+    fn new_finished(payload: Vec<u8>) -> Self {
+        Self {
+            handshake_type: HandshakeMessageType::Finished,
+            payload,
+        }
+    }
+
     fn encode(&self) -> Result<Vec<u8>, EncodeError> {
         let mut output = Vec::new();
         output.extend_from_slice(&[self.handshake_type.clone() as u8]);
@@ -164,7 +171,9 @@ impl CertificateVerify {
     pub fn decode(input: &[u8]) -> Result<(Self, &[u8]), DecodeError> {
         let (handshake_message, remaining) = HandShakeMessage::decode(input)?;
         let input = handshake_message.payload;
-        // TODO check the message type
+        if handshake_message.handshake_type != HandshakeMessageType::CertificateVerify {
+            return Err(DecodeError::UnexpectedMessageType);
+        }
 
         if input.len() < 4 {
             return Err(DecodeError::BadLength(
@@ -279,7 +288,6 @@ impl CertificateVerify {
 /// The Finished message which is:
 ///
 /// HMAC(Finished MAC Key, Hash(Handshake Context || authenticator request || Certificate || CertificateVerify))
-// TODO this should be wrapped in a HandshakeMessage with type (0x14) and length (3 bytes)
 #[derive(Debug, PartialEq, Clone)]
 pub struct Finished {
     hmac: Vec<u8>,
@@ -306,14 +314,23 @@ impl Finished {
         })
     }
 
-    pub fn encode(&self) -> Vec<u8> {
-        self.hmac.clone()
+    pub fn encode(&self) -> Result<Vec<u8>, EncodeError> {
+        let handshake_message = HandShakeMessage::new_finished(self.hmac.clone());
+        handshake_message.encode()
     }
 
-    pub fn decode(input: &[u8]) -> Result<Self, DecodeError> {
-        Ok(Self {
-            hmac: input.to_vec(),
-        })
+    pub fn decode(input: &[u8]) -> Result<(Self, &[u8]), DecodeError> {
+        let (handshake_message, remaining) = HandShakeMessage::decode(input)?;
+        if handshake_message.handshake_type != HandshakeMessageType::Finished {
+            return Err(DecodeError::UnexpectedMessageType);
+        }
+
+        Ok((
+            Self {
+                hmac: handshake_message.payload,
+            },
+            remaining,
+        ))
     }
 }
 
@@ -496,7 +513,10 @@ impl Certificate {
 
     pub fn decode(input: &[u8]) -> Result<(Self, &[u8]), DecodeError> {
         let (handshake_message, remaining) = HandShakeMessage::decode(input)?;
-        // TODO check the message type
+        if handshake_message.handshake_type != HandshakeMessageType::Certificate {
+            return Err(DecodeError::UnexpectedMessageType);
+        }
+
         let mut cursor = Cursor::new(handshake_message.payload);
 
         // Read context
@@ -607,8 +627,6 @@ mod tests {
         96 12 29 ac 91 87 b4 2b 4d e1 00 00"#;
         let cert_bytes = hex_string_to_bytes(cert_hex);
 
-        println!("{}", cert_bytes.len());
-
         let (_decoded_entry, remaining) = Certificate::decode(&cert_bytes).unwrap();
 
         assert!(remaining.is_empty());
@@ -630,11 +648,21 @@ mod tests {
 
         let cert_bytes = hex_string_to_bytes(certificate_verify_hex);
 
-        println!("{}", cert_bytes.len());
-
         let (_decoded_entry, remaining) = CertificateVerify::decode(&cert_bytes).unwrap();
 
         assert!(remaining.is_empty());
+    }
+
+    #[test]
+    fn decode_finished() {
+        // Test data from RFC8448
+        let finished_hex = r#"14 00 00 20 a8 ec 43 6d 67 76 34 ae 52 5a
+         c1 fc eb e1 1a 03 9e c1 76 94 fa c6 e9 85 27 b6 42 f2 ed d5 ce
+         61"#;
+
+        let finished_bytes = hex_string_to_bytes(finished_hex);
+
+        let _decoded = Finished::decode(&finished_bytes).unwrap();
     }
 
     #[test]
