@@ -33,7 +33,7 @@ impl Authenticator {
         let certificate_verify = CertificateVerify::new(
             &certificate,
             private_key,
-            &certificate_request,
+            certificate_request,
             &handshake_context_exporter,
         )?;
 
@@ -64,8 +64,8 @@ impl Authenticator {
 
     /// Deserialize from bytes
     pub fn decode(input: &[u8]) -> Result<Self, DecodeError> {
-        let (certificate, input) = Certificate::decode(&input)?;
-        let (certificate_verify, input) = CertificateVerify::decode(&input)?;
+        let (certificate, input) = Certificate::decode(input)?;
+        let (certificate_verify, input) = CertificateVerify::decode(input)?;
         Ok(Self {
             certificate,
             certificate_verify,
@@ -74,7 +74,7 @@ impl Authenticator {
     }
 
     pub fn cert_der(&self) -> Result<Vec<u8>, String> {
-        match self.certificate.certificate_list.iter().next() {
+        match self.certificate.certificate_list.first() {
             Some(certificate_entry) => certificate_entry.as_cert_der(),
             None => Err("No certificate".to_string()),
         }

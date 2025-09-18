@@ -56,7 +56,7 @@ pub fn extract_attestation(
 fn oid_to_u64_vec(oid: &Oid) -> Result<Vec<u64>, CwmAttestationCertifcateExtensionError> {
     let iter = oid
         .iter()
-        .ok_or_else(|| CwmAttestationCertifcateExtensionError::OIDComponentTooLarge)?;
+        .ok_or(CwmAttestationCertifcateExtensionError::OIDComponentTooLarge)?;
 
     Ok(iter.collect())
 }

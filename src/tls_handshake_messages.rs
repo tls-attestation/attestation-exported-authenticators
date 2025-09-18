@@ -74,8 +74,7 @@ impl CertificateVerify {
         let signature_scheme = u16::from_be_bytes([input[0], input[1]]);
         if signature_scheme != 0x0403 {
             return Err(DecodeError::BadSignatureScheme(format!(
-                "Unsupported signature scheme: {:x}. Expected ecdsa_secp256r1_sha256 (0x0403)",
-                signature_scheme
+                "Unsupported signature scheme: {signature_scheme:x}. Expected ecdsa_secp256r1_sha256 (0x0403)"
             )));
         }
 
@@ -108,12 +107,11 @@ impl CertificateVerify {
         // Extract the public key from the certificate
         let certificate_entry = certificate
             .certificate_list
-            .iter()
-            .next()
+            .first()
             .ok_or(EncodeError::NoCertificate)?;
 
         if let CertificateType::X509(x509_bytes) = &certificate_entry.certificate_type {
-            let (_, cert) = X509Certificate::from_der(&x509_bytes)?;
+            let (_, cert) = X509Certificate::from_der(x509_bytes)?;
 
             let pk_info = &cert.tbs_certificate.subject_pki.parsed()?;
             if let x509_parser::public_key::PublicKey::EC(ec_point) = pk_info {
@@ -274,7 +272,7 @@ impl CertificateEntry {
 
                 // Write the actual DER certificate data.
                 cursor
-                    .write_all(&cert_der)
+                    .write_all(cert_der)
                     .expect("Failed to write certificate data");
             }
             _ => {
@@ -372,8 +370,7 @@ impl Certificate {
         // them
         let encoded_cert_entry = self
             .certificate_list
-            .iter()
-            .next()
+            .first()
             .ok_or(EncodeError::NoCertificate)?
             .encode();
 
