@@ -1,6 +1,7 @@
 use attestation_exported_authenticators::{
     authenticator::Authenticator, certificate_request::CertificateRequest,
     create_cwm_attestation_extension, extract_attestation,
+    EXPORTER_SERVER_AUTHENTICATOR_FINISHED_KEY, EXPORTER_SERVER_AUTHENTICATOR_HANDSHAKE_CONTEXT,
 };
 use quinn::{crypto::rustls::QuicClientConfig, ClientConfig, Endpoint, ServerConfig};
 use rand_core::{OsRng, RngCore};
@@ -48,10 +49,33 @@ async fn demonstrate_with_quic_and_tdx() {
 
         let cert_der = create_cert_der(&keypair, Some(&quote));
 
-        let authenticator = Authenticator::new(cert_der.into(), private_key_der);
+        let mut handshake_context_exporter = [0u8; 64];
+        conn.export_keying_material(
+            &mut handshake_context_exporter,
+            EXPORTER_SERVER_AUTHENTICATOR_HANDSHAKE_CONTEXT,
+            &cert_request.certificate_request_context,
+        )
+        .unwrap();
+
+        let mut finished_key_exporter = [0u8; 32];
+        conn.export_keying_material(
+            &mut finished_key_exporter,
+            EXPORTER_SERVER_AUTHENTICATOR_FINISHED_KEY,
+            &cert_request.certificate_request_context,
+        )
+        .unwrap();
+
+        let authenticator = Authenticator::new(
+            cert_der.into(),
+            private_key_der,
+            &cert_request,
+            handshake_context_exporter,
+            finished_key_exporter,
+        )
+        .unwrap();
 
         send_stream
-            .write_all(&authenticator.encode())
+            .write_all(&authenticator.encode().unwrap())
             .await
             .unwrap();
         send_stream.finish().unwrap(); // Close the send side of the stream
@@ -95,9 +119,33 @@ async fn demonstrate_with_quic_and_tdx() {
         // Wait for a response from the server.
         let response = recv_stream.read_to_end(65535).await.unwrap();
 
-        let authenticator = Authenticator::decode(response).unwrap();
+        let authenticator = Authenticator::decode(&response).unwrap();
 
-        let quote_bytes = extract_attestation(&authenticator.certificate).unwrap();
+        let mut handshake_context_exporter = [0u8; 64];
+        conn.export_keying_material(
+            &mut handshake_context_exporter,
+            EXPORTER_SERVER_AUTHENTICATOR_HANDSHAKE_CONTEXT,
+            &cert_request.certificate_request_context,
+        )
+        .unwrap();
+
+        let mut finished_key_exporter = [0u8; 32];
+        conn.export_keying_material(
+            &mut finished_key_exporter,
+            EXPORTER_SERVER_AUTHENTICATOR_FINISHED_KEY,
+            &cert_request.certificate_request_context,
+        )
+        .unwrap();
+
+        assert!(authenticator
+            .verify(
+                &cert_request,
+                &handshake_context_exporter,
+                &finished_key_exporter
+            )
+            .is_ok());
+
+        let quote_bytes = extract_attestation(&authenticator.cert_der().unwrap()).unwrap();
 
         let quote = Quote::from_bytes(&quote_bytes).unwrap();
 

@@ -1,12 +1,24 @@
 pub mod authenticator;
 pub mod certificate_request;
+mod tls_handshake_messages;
 
 use asn1_rs::{FromDer, Sequence};
 use asn1_rs::{Oid, ToDer};
 use rcgen::CustomExtension;
+use thiserror::Error;
 use x509_parser::der_parser::oid;
 use x509_parser::error::X509Error;
 use x509_parser::prelude::X509Certificate;
+
+pub static EXPORTER_CLIENT_AUTHENTICATOR_HANDSHAKE_CONTEXT: &[u8] =
+    b"EXPORTER-client authenticator handshake context";
+pub static EXPORTER_SERVER_AUTHENTICATOR_HANDSHAKE_CONTEXT: &[u8] =
+    b"EXPORTER-server authenticator handshake context";
+
+pub static EXPORTER_CLIENT_AUTHENTICATOR_FINISHED_KEY: &[u8] =
+    b"EXPORTER-client authenticator finished key";
+pub static EXPORTER_SERVER_AUTHENTICATOR_FINISHED_KEY: &[u8] =
+    b"EXPORTER-server authenticator finished key";
 
 /// Returns the OID for the cwm attestation
 // TODO #5 replace with the acutal OID for the cwm_attestation extension
@@ -81,6 +93,34 @@ impl From<asn1_rs::Err<asn1_rs::Error>> for CwmAttestationCertifcateExtensionErr
     fn from(err: asn1_rs::Err<asn1_rs::Error>) -> Self {
         Self::ASN1(err.into())
     }
+}
+
+#[derive(Error, Debug)]
+pub enum EncodeError {
+    #[error("Failed to encode {0}")]
+    Io(#[from] std::io::Error),
+    #[error("Expected at least one certificate")]
+    NoCertificate,
+    #[error("Failed to convert secret key: {0}")]
+    PKCS8(#[from] p256::pkcs8::Error),
+    #[error("HMAC: {0}")]
+    HMAC(#[from] hmac::digest::InvalidLength),
+    #[error("Request context length must be less than 255 bytes")]
+    ContextTooLong,
+    #[error("Encoded certificate entry is too long to process")]
+    CertificateEntryTooLong,
+}
+
+#[derive(Error, Debug)]
+pub enum DecodeError {
+    #[error("Failed to decode {0}")]
+    Io(#[from] std::io::Error),
+    #[error("Bad length: {0}")]
+    BadLength(String),
+    #[error("Unexpected signature scheme: {0}")]
+    BadSignatureScheme(String),
+    #[error("Failed to decode DER signature: {0}")]
+    P256(#[from] p256::ecdsa::Error),
 }
 
 #[cfg(test)]

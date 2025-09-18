@@ -1,58 +1,114 @@
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 
+use crate::{
+    certificate_request::CertificateRequest,
+    tls_handshake_messages::{
+        Certificate, CertificateEntry, CertificateVerify, Finished, VerificationError,
+    },
+    DecodeError, EncodeError,
+};
+
 /// An Authenticator as per RFC9261 Exported Authenticators
 #[derive(Debug, PartialEq, Clone)]
 pub struct Authenticator {
-    pub certificate: Vec<u8>,
-    certificate_verify: Vec<u8>,
-    finished: Vec<u8>,
+    certificate: Certificate,
+    certificate_verify: CertificateVerify,
+    finished: Finished,
 }
 
 impl Authenticator {
-    pub fn new(certificate: CertificateDer, _private_key: PrivateKeyDer) -> Self {
-        // TODO#4 this should be encoded as a cert chain with length prefix:
-        // https://www.rfc-editor.org/rfc/rfc8446#section-4.4.2
+    pub fn new(
+        certificate: CertificateDer,
+        private_key: PrivateKeyDer,
+        certificate_request: &CertificateRequest,
+        handshake_context_exporter: [u8; 64],
+        finished_key_exporter: [u8; 32],
+    ) -> Result<Self, EncodeError> {
         let certificate = certificate.to_vec();
+        let certificate = Certificate {
+            certificate_request_context: certificate_request.certificate_request_context.clone(),
+            certificate_list: vec![CertificateEntry::from_cert_der(certificate.to_vec())],
+        };
 
-        // TODO#4 this should be the signature
-        // https://www.rfc-editor.org/rfc/rfc9261#section-5.2.2
-        let certificate_verify = Default::default();
+        let certificate_verify = CertificateVerify::new(
+            &certificate,
+            private_key,
+            &certificate_request,
+            &handshake_context_exporter,
+        )?;
 
-        // TODO#4 this should be:
-        // Finished = HMAC(Finished MAC Key, Hash(Handshake Context ||
-        //      authenticator request || Certificate || CertificateVerify))
-        let finished = Default::default();
+        let finished = Finished::new(
+            &certificate,
+            &certificate_verify,
+            certificate_request,
+            &handshake_context_exporter,
+            &finished_key_exporter,
+        )?;
 
-        Self {
+        Ok(Self {
             certificate,
             certificate_verify,
             finished,
-        }
+        })
     }
 
     /// Serialize to bytes
     /// Certificate || CertificateVerify || Finished
-    pub fn encode(&self) -> Vec<u8> {
+    pub fn encode(&self) -> Result<Vec<u8>, EncodeError> {
         let mut output = Vec::new();
-        output.extend_from_slice(&self.certificate);
-        output.extend_from_slice(&self.certificate_verify);
-        output.extend_from_slice(&self.finished);
-        output
+        output.extend_from_slice(&self.certificate.encode()?);
+        output.extend_from_slice(&self.certificate_verify.encode());
+        output.extend_from_slice(&self.finished.encode());
+        Ok(output)
     }
 
     /// Deserialize from bytes
-    pub fn decode(input: Vec<u8>) -> Result<Self, ()> {
-        // TODO this should actually parse all values
+    pub fn decode(input: &[u8]) -> Result<Self, DecodeError> {
+        let (certificate, input) = Certificate::decode(&input)?;
+        let (certificate_verify, input) = CertificateVerify::decode(&input)?;
         Ok(Self {
-            certificate: input,
-            certificate_verify: Default::default(),
-            finished: Default::default(),
+            certificate,
+            certificate_verify,
+            finished: Finished::decode(input)?,
         })
+    }
+
+    pub fn cert_der(&self) -> Result<Vec<u8>, String> {
+        match self.certificate.certificate_list.iter().next() {
+            Some(certificate_entry) => certificate_entry.as_cert_der(),
+            None => Err("No certificate".to_string()),
+        }
+    }
+
+    pub fn verify(
+        &self,
+        certificate_request: &CertificateRequest,
+        handshake_context_exporter: &[u8; 64],
+        finished_key_exporter: &[u8; 32],
+    ) -> Result<(), VerificationError> {
+        let finished_check = Finished::new(
+            &self.certificate,
+            &self.certificate_verify,
+            certificate_request,
+            handshake_context_exporter,
+            finished_key_exporter,
+        )?;
+
+        if finished_check != self.finished {
+            return Err(VerificationError::BadFinished);
+        }
+
+        self.certificate_verify.verify(
+            &self.certificate,
+            certificate_request,
+            handshake_context_exporter,
+        )
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use rand_core::{OsRng, RngCore};
     use rcgen::CertificateParams;
     use rustls::pki_types::PrivatePkcs8KeyDer;
 
@@ -64,6 +120,16 @@ mod tests {
         cert.der().to_vec()
     }
 
+    fn create_certificate_request() -> CertificateRequest {
+        let mut context = [0u8; 32];
+        OsRng.fill_bytes(&mut context);
+
+        CertificateRequest {
+            certificate_request_context: context.to_vec(),
+            extensions: b"cmw_attestation".to_vec(), // TODO
+        }
+    }
+
     #[test]
     fn encode_decode_authenticator() {
         let keypair = rcgen::KeyPair::generate().unwrap();
@@ -71,10 +137,30 @@ mod tests {
         let private_key_der =
             PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(keypair.serialize_der()));
 
-        let authenticator = Authenticator::new(cert_der.into(), private_key_der);
+        let certificate_request = create_certificate_request();
 
-        let encoded = authenticator.encode();
+        let handshake_context_exporter = [0; 64];
+        let finished_key_exporter = [0; 32];
 
-        assert_eq!(authenticator, Authenticator::decode(encoded).unwrap());
+        let authenticator = Authenticator::new(
+            cert_der.into(),
+            private_key_der,
+            &certificate_request,
+            handshake_context_exporter,
+            finished_key_exporter,
+        )
+        .unwrap();
+
+        let encoded = authenticator.encode().unwrap();
+
+        assert_eq!(authenticator, Authenticator::decode(&encoded).unwrap());
+
+        authenticator
+            .verify(
+                &certificate_request,
+                &handshake_context_exporter,
+                &finished_key_exporter,
+            )
+            .unwrap();
     }
 }

@@ -3,31 +3,33 @@ use std::io::Read;
 /// A CertificateRequest message as per RFC9261 Exported Authenticators
 #[derive(Debug, PartialEq, Clone)]
 pub struct CertificateRequest {
+    /// Context used to link the response to this request
     pub certificate_request_context: Vec<u8>,
-    pub extensions: Vec<u8>, // Represents the serialized extensions
+    /// The serialized extensions
+    pub extensions: Vec<u8>,
 }
 
 impl CertificateRequest {
     /// Serialize to bytes
     pub fn encode(&self) -> Vec<u8> {
-        // Handshake type: A 1-byte value for CertificateRequest (0x0D).
+        // Handshake type: A 1 byte value for CertificateRequest (0x0D).
         let mut encoded_message = vec![0x0D];
 
-        // Handshake message length: A 3-byte value for the total length of the payload.
-        let payload_length = 1 + self.certificate_request_context.len() + // certificate_request_context (1-byte length + content)
-        2 + self.extensions.len(); // extensions (2-byte length + content)
+        // Handshake message length: A 3-byte value for the total length of the payload
+        // + extensions (2 byte length + content)
+        let payload_length = 1 + self.certificate_request_context.len() + 2 + self.extensions.len();
 
         // Ensure the payload length fits within 3 bytes.
         let length_bytes = (payload_length as u32).to_be_bytes();
         encoded_message.extend_from_slice(&length_bytes[1..]); // Use the last 3 bytes.
 
-        // Encode the certificate_request_context.
-        // The length is a 1-byte value.
+        // Encode the certificate_request_context
+        // The length is a 1 byte value
         encoded_message.push(self.certificate_request_context.len() as u8);
         encoded_message.extend_from_slice(&self.certificate_request_context);
 
-        // Encode the extensions.
-        // The length is a 2-byte value.
+        // Encode the extensions
+        // The length is a 2 byte value
         let extension_length_bytes = (self.extensions.len() as u16).to_be_bytes();
         encoded_message.extend_from_slice(&extension_length_bytes);
         encoded_message.extend_from_slice(&self.extensions);
