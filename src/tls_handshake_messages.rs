@@ -1,3 +1,7 @@
+//! TLS 1.3 Handshake messages which are used in the exported authenticator
+//!
+//! ['The illustrated TLS 1.3 Connection'](https://tls13.xargs.org) is a useful resource for these
+
 use std::io::{self, Cursor, Read, Write};
 
 use hmac::{Hmac, Mac};
