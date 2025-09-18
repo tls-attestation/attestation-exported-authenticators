@@ -104,19 +104,26 @@ impl HandShakeMessage {
     }
 
     fn decode(input: &[u8]) -> Result<(Self, &[u8]), DecodeError> {
-        if input.len() < 4 {
-            return Err(DecodeError::BadLength(
-                "Message too short to be a valid Handshake message".to_string(),
-            ));
-        }
-        let handshake_type = input[0].try_into()?;
-        let payload_length = uint24_bytes_to_usize(input[1..4].try_into().unwrap());
-        let payload = &input[4..4 + payload_length]; // TODO this will panic - use cursor
-        let remaining = &input[4 + payload_length..];
+        let mut cursor = Cursor::new(input);
+
+        let mut handshake_type_byte = [0];
+        cursor.read_exact(&mut handshake_type_byte)?;
+        let handshake_type = handshake_type_byte[0].try_into()?;
+
+        let mut length_bytes = [0u8; 3];
+        cursor.read_exact(&mut length_bytes)?;
+        let payload_length = uint24_bytes_to_usize(length_bytes);
+
+        let mut payload = vec![0u8; payload_length];
+        cursor.read_exact(&mut payload)?;
+
+        let current_position = cursor.position() as usize;
+        let remaining = &input[current_position..];
+
         Ok((
             Self {
                 handshake_type,
-                payload: payload.to_vec(),
+                payload,
             },
             remaining,
         ))
