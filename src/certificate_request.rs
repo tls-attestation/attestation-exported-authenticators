@@ -1,3 +1,4 @@
+use crate::DecodeError;
 use std::io::Read;
 
 /// A CertificateRequest message as per RFC9261 Exported Authenticators
@@ -43,34 +44,34 @@ impl CertificateRequest {
 
         // Read and verify the handshake type (1 byte)
         let mut msg_type_buf = [0u8; 1];
-        if cursor.read_exact(&mut msg_type_buf).is_err() {
-            return Err(DecodeError::EndOfBuffer);
-        }
+        cursor.read_exact(&mut msg_type_buf)?;
         if msg_type_buf[0] != 0x0D {
-            return Err(DecodeError::InvalidMessageType);
+            return Err(DecodeError::UnknownMessageType);
         }
 
         // Read the handshake message length (3 bytes)
         let mut length_buf = [0u8; 3];
-        if cursor.read_exact(&mut length_buf).is_err() {
-            return Err(DecodeError::EndOfBuffer);
-        }
+        cursor.read_exact(&mut length_buf)?;
+
         let payload_length =
             ((length_buf[0] as u32) << 16) | ((length_buf[1] as u32) << 8) | (length_buf[2] as u32);
 
         // Check if the reported length matches the remaining data.
         if payload_length as usize != cursor.get_ref().len() - cursor.position() as usize {
-            return Err(DecodeError::InvalidLength);
+            return Err(DecodeError::BadLength(
+                "Reported length does not match remaining data".to_string(),
+            ));
         }
 
         // Read the certificate_request_context length (1 byte) and data
         let mut context_len_buf = [0u8; 1];
-        if cursor.read_exact(&mut context_len_buf).is_err() {
-            return Err(DecodeError::EndOfBuffer);
-        }
+        cursor.read_exact(&mut context_len_buf)?;
+
         let context_length = context_len_buf[0] as usize;
         if (cursor.position() as usize + context_length) > cursor.get_ref().len() {
-            return Err(DecodeError::EndOfBuffer);
+            return Err(DecodeError::BadLength(
+                "Reported length does not match remaining data".to_string(),
+            ));
         }
         let context_start = cursor.position() as usize;
         cursor.set_position(cursor.position() + context_length as u64);
@@ -79,14 +80,15 @@ impl CertificateRequest {
 
         // Read the extensions length (2 bytes) and data
         let mut ext_len_buf = [0u8; 2];
-        if cursor.read_exact(&mut ext_len_buf).is_err() {
-            return Err(DecodeError::EndOfBuffer);
-        }
+        cursor.read_exact(&mut ext_len_buf)?;
+
         let extensions_length = ((ext_len_buf[0] as u16) << 8) | (ext_len_buf[1] as u16);
         let extensions_length = extensions_length as usize;
 
         if (cursor.position() as usize + extensions_length) > cursor.get_ref().len() {
-            return Err(DecodeError::EndOfBuffer);
+            return Err(DecodeError::BadLength(
+                "Reported length does not match remaining data".to_string(),
+            ));
         }
         let extensions_start = cursor.position() as usize;
         let extensions = data[extensions_start..extensions_start + extensions_length].to_vec();
@@ -95,21 +97,6 @@ impl CertificateRequest {
             certificate_request_context,
             extensions,
         })
-    }
-}
-
-/// An error when decoding a [CertificateRequest]
-#[derive(Debug)]
-pub enum DecodeError {
-    InvalidMessageType,
-    InvalidLength,
-    EndOfBuffer,
-    IoError(std::io::Error),
-}
-
-impl From<std::io::Error> for DecodeError {
-    fn from(err: std::io::Error) -> Self {
-        DecodeError::IoError(err)
     }
 }
 
