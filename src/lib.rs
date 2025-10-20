@@ -86,30 +86,7 @@ pub enum CmwAttestationCertifcateExtensionError {
     Asn1X509(#[from] asn1_rs::Err<x509_parser::error::X509Error>),
 }
 
-// impl From<asn1_rs::SerializeError> for CwmAttestationCertifcateExtensionError {
-//     fn from(err: asn1_rs::SerializeError) -> Self {
-//         Self::Asn1Serialize(err)
-//     }
-// }
-//
-// impl From<asn1_rs::Err<X509Error>> for CwmAttestationCertifcateExtensionError {
-//     fn from(err: asn1_rs::Err<X509Error>) -> Self {
-//         Self::X509(err.into())
-//     }
-// }
-//
-// impl From<X509Error> for CwmAttestationCertifcateExtensionError {
-//     fn from(err: X509Error) -> Self {
-//         Self::X509(err)
-//     }
-// }
-//
-// impl From<asn1_rs::Err<asn1_rs::Error>> for CwmAttestationCertifcateExtensionError {
-//     fn from(err: asn1_rs::Err<asn1_rs::Error>) -> Self {
-//         Self::ASN1(err.into())
-//     }
-// }
-
+/// An error when encoding a message
 #[derive(Error, Debug)]
 pub enum EncodeError {
     #[error("Failed to encode {0}")]
@@ -128,6 +105,7 @@ pub enum EncodeError {
     TooLong,
 }
 
+/// An error when decoding a message
 #[derive(Error, Debug)]
 pub enum DecodeError {
     #[error("Failed to decode {0}")]
