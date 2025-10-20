@@ -33,3 +33,5 @@ jobs:
     - name: Run cargo test
       run: cargo test
 
+    - name: Check compiles for wasm32-unknown-unknown
+      run: cargo check --tests --target wasm32-unknown-unknown --features wasm
