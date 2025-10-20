@@ -188,9 +188,9 @@ dependencies = [
 
 [[package]]
 name = "configfs-tsm"
-version = "0.0.1"
+version = "0.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "69e259465c479ea772003ae9e70bcecebefa0e46e0862ffe728edefafc96006b"
+checksum = "187437900921c8172f33316ad51a3267df588e99a2aebfa5ca1a2ed44df9e703"
 
 [[package]]
 name = "const-oid"
