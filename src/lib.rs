@@ -4,7 +4,9 @@ mod tls_handshake_messages;
 
 use asn1_rs::{FromDer, Sequence};
 use asn1_rs::{Oid, ToDer};
+use cmw::{cmw::CMW, monad::Monad, Mime};
 use rcgen::CustomExtension;
+use std::str::FromStr;
 use thiserror::Error;
 use x509_parser::der_parser::oid;
 use x509_parser::error::X509Error;
@@ -56,6 +58,25 @@ pub fn extract_attestation(
     let sequence_der = extension.value.to_vec();
     let (_, sequence) = Sequence::from_der(&sequence_der)?;
     Ok(sequence.content.to_vec())
+}
+
+pub fn wrap_cmw_cbor(input: Vec<u8>) -> Result<Vec<u8>, String> {
+    let wrapped = CMW::Monad(Monad::new(
+        Mime::from_str("application/signed-corim+cbor").map_err(|e| e.to_string())?,
+        input,
+        None,
+    )?);
+    wrapped.marshal_cbor()
+}
+
+pub fn unwrap_cmw_cbor(input: &[u8]) -> Result<Vec<u8>, String> {
+    let unwrapped = CMW::unmarshal_cbor(input)?;
+    if let CMW::Monad(monad) = unwrapped {
+        Ok(monad.value())
+    } else {
+        // TODO parse collection and take first item
+        Err("Expected monad, got collection".to_string())
+    }
 }
 
 /// Internal helper to format an OID as a Vec<u64>
@@ -146,5 +167,13 @@ mod tests {
         let attestation = b"attestation goes here";
         let cert_der = create_cert_der(Some(attestation));
         assert_eq!(extract_attestation(&cert_der).unwrap(), attestation);
+    }
+
+    #[test]
+    fn wrap_unwrap_cmw() {
+        let input = b"some input data".to_vec();
+        let wrapped = wrap_cmw_cbor(input.clone()).unwrap();
+        let output = unwrap_cmw_cbor(&wrapped).unwrap();
+        assert_eq!(input, output);
     }
 }
