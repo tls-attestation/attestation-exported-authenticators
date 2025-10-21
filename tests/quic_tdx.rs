@@ -1,6 +1,6 @@
 use attestation_exported_authenticators::{
     authenticator::Authenticator, certificate_request::CertificateRequest,
-    create_cmw_attestation_extension, extract_attestation,
+    create_cmw_attestation_extension, extract_attestation, unwrap_cmw_cbor, wrap_cmw_cbor,
     EXPORTER_SERVER_AUTHENTICATOR_FINISHED_KEY, EXPORTER_SERVER_AUTHENTICATOR_HANDSHAKE_CONTEXT,
 };
 use quinn::{crypto::rustls::QuicClientConfig, ClientConfig, Endpoint, ServerConfig};
@@ -34,9 +34,10 @@ async fn handle_connection_server(conn: &quinn::Connection, keypair: rcgen::KeyP
 
     let private_key_der = PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(keypair.serialize_der()));
 
-    // TODO#1 here we should wrap the quote in a RATS Conceptual Messages Wrapper (CMW)
+    // Wrap the quote in a RATS Conceptual Messages Wrapper (CMW)
+    let cmw_wrapped_quote = wrap_cmw_cbor(quote).unwrap();
 
-    let cert_der = create_cert_der(&keypair, Some(&quote));
+    let cert_der = create_cert_der(&keypair, Some(&cmw_wrapped_quote));
 
     let mut handshake_context_exporter = [0u8; 64];
     conn.export_keying_material(
@@ -122,7 +123,9 @@ async fn handle_connection_client(conn: &quinn::Connection) {
         )
         .is_ok());
 
-    let quote_bytes = extract_attestation(&authenticator.cert_der().unwrap()).unwrap();
+    let cmw_wrapped_quote_bytes = extract_attestation(&authenticator.cert_der().unwrap()).unwrap();
+
+    let quote_bytes = unwrap_cmw_cbor(&cmw_wrapped_quote_bytes).unwrap();
 
     let quote = Quote::from_bytes(&quote_bytes).unwrap();
 
