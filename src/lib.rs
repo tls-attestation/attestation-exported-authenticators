@@ -60,6 +60,7 @@ pub fn extract_attestation(
     Ok(sequence.content.to_vec())
 }
 
+/// Given attestation data as bytes wrap in a conceptual messages wrapper and encode as CBOR
 pub fn wrap_cmw_cbor(input: Vec<u8>) -> Result<Vec<u8>, String> {
     let wrapped = CMW::Monad(Monad::new(
         Mime::from_str("application/signed-corim+cbor").map_err(|e| e.to_string())?,
@@ -69,6 +70,7 @@ pub fn wrap_cmw_cbor(input: Vec<u8>) -> Result<Vec<u8>, String> {
     wrapped.marshal_cbor()
 }
 
+/// Given a CBOR encoded conceptual messages wrapper, decode and return a single value
 pub fn unwrap_cmw_cbor(input: &[u8]) -> Result<Vec<u8>, String> {
     let unwrapped = CMW::unmarshal_cbor(input)?;
     if let CMW::Monad(monad) = unwrapped {
