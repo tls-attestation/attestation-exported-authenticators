@@ -471,8 +471,8 @@ pub struct Certificate {
 
 impl Certificate {
     pub fn encode(&self) -> Result<Vec<u8>, EncodeError> {
-        let mut certificate_list_bytes = Vec::new();
-        let mut cursor = Cursor::new(&mut certificate_list_bytes);
+        let mut certificate_bytes = Vec::new();
+        let mut cursor = Cursor::new(&mut certificate_bytes);
 
         let context_len = self.certificate_request_context.len();
         if context_len > 255 {
@@ -481,16 +481,20 @@ impl Certificate {
         cursor.write_all(&[context_len as u8])?;
         cursor.write_all(&self.certificate_request_context)?;
 
-        // TODO here we just take the first cert in the list, but we should iterate over all of
-        // them
-        let encoded_cert_entry = self
-            .certificate_list
-            .first()
-            .ok_or(EncodeError::NoCertificate)?
-            .encode();
+        let certificate_list_bytes = {
+            let mut certificate_list_bytes = Vec::new();
+            let mut cursor = Cursor::new(&mut certificate_list_bytes);
+            for cert in self.certificate_list.iter() {
+                let encoded_cert_entry = cert.encode();
+
+                // Write the `CertificateEntry` bytes
+                cursor.write_all(&encoded_cert_entry)?;
+            }
+            certificate_list_bytes
+        };
 
         // Write the 24-bit length prefix for the combined certificate entries
-        let certificate_entry_len = encoded_cert_entry.len();
+        let certificate_entry_len = certificate_list_bytes.len();
         if certificate_entry_len > 0x00FFFFFF {
             return Err(EncodeError::CertificateEntryTooLong);
         };
@@ -501,10 +505,9 @@ impl Certificate {
         ];
         cursor.write_all(&len_bytes)?;
 
-        // Write the `CertificateEntry` bytes
-        cursor.write_all(&encoded_cert_entry)?;
+        cursor.write_all(&certificate_list_bytes)?;
 
-        let handshake_message = HandShakeMessage::new_certificate(certificate_list_bytes);
+        let handshake_message = HandShakeMessage::new_certificate(certificate_bytes);
         handshake_message.encode()
     }
 
@@ -535,20 +538,13 @@ impl Certificate {
         let mut cert_list_data = vec![0u8; cert_list_len];
         cursor.read_exact(&mut cert_list_data)?;
 
-        // Decode the single CertificateEntry from the list data and get the remaining bytes
-        let (certificate_entry, _remaining) = CertificateEntry::decode(&cert_list_data)?;
-        let certificate_list = vec![certificate_entry];
-
-        // // Ensure there are no leftover bytes within the certificate list data itself
-        // if !remaining_in_list.is_empty() {
-        //     return Err(io::Error::new(
-        //         io::ErrorKind::InvalidData,
-        //         "Unexpected bytes in certificate list",
-        //     ));
-        // }
-
-        // let offset = 1 + context_len + 3 + cert_list_len;
-        // let remaining_after_list = &[offset..];
+        // Decode the CertificateEntrys from the list data
+        let mut certificate_list = Vec::new();
+        while !cert_list_data.is_empty() {
+            let (certificate_entry, remaining) = CertificateEntry::decode(&cert_list_data)?;
+            certificate_list.push(certificate_entry);
+            cert_list_data = remaining.to_vec();
+        }
 
         Ok((
             Certificate {
@@ -700,6 +696,28 @@ mod tests {
         let certificate = Certificate {
             certificate_request_context: b"context".to_vec(),
             certificate_list: vec![entry],
+        };
+
+        let encoded = certificate.encode().unwrap();
+        let (decoded_cert, remaining) = Certificate::decode(&encoded).unwrap();
+
+        assert_eq!(certificate, decoded_cert);
+        assert!(remaining.is_empty());
+    }
+
+    #[test]
+    fn encode_decode_certificate_with_chain() {
+        let keypair = rcgen::KeyPair::generate().unwrap();
+        let cert_der = create_cert_der(&keypair);
+        let entry0 = CertificateEntry::from_cert_der(cert_der.clone());
+
+        let keypair = rcgen::KeyPair::generate().unwrap();
+        let cert_der = create_cert_der(&keypair);
+        let entry1 = CertificateEntry::from_cert_der(cert_der.clone());
+
+        let certificate = Certificate {
+            certificate_request_context: b"context".to_vec(),
+            certificate_list: vec![entry0, entry1],
         };
 
         let encoded = certificate.encode().unwrap();
