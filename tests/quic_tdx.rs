@@ -1,19 +1,16 @@
+mod helpers;
+
+use helpers::{
+    create_cert_der, create_quinn_client, create_quinn_server, create_quinn_servers,
+    generate_certificate_chain,
+};
+
 use attestation_exported_authenticators::{
-    authenticator::Authenticator, certificate_request::CertificateRequest,
-    create_cmw_attestation_extension, extract_attestation,
+    authenticator::Authenticator, certificate_request::CertificateRequest, extract_attestation,
     EXPORTER_SERVER_AUTHENTICATOR_FINISHED_KEY, EXPORTER_SERVER_AUTHENTICATOR_HANDSHAKE_CONTEXT,
 };
-use quinn::{
-    crypto::rustls::{QuicClientConfig, QuicServerConfig},
-    ClientConfig, Endpoint, ServerConfig,
-};
 use rand_core::{OsRng, RngCore};
-use rcgen::CertificateParams;
-use rustls::{
-    pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer},
-    server::WebPkiClientVerifier,
-};
-use std::{error::Error, sync::Arc};
+use rustls::pki_types::PrivateKeyDer;
 use tdx_quote::Quote;
 
 /// Given an incoming connection, accept a [CertificateRequest] and respond with an attestation [Authenticator]
@@ -136,28 +133,24 @@ async fn handle_connection_client(conn: &quinn::Connection) {
 
 #[tokio::test]
 async fn demonstrate_with_quic_and_tdx() {
-    let keypair = rcgen::KeyPair::generate().unwrap();
-    let (server_config, client_config) = generate_certs(&keypair).unwrap();
+    let (cert_chain, keypair) = generate_certificate_chain();
+    let server = create_quinn_server(cert_chain.clone(), keypair.clone_key(), None, false);
 
-    let server = Endpoint::server(server_config, "127.0.0.1:0".parse().unwrap()).unwrap();
     let server_addr = server.local_addr().unwrap();
+
     let server_handle = tokio::spawn(async move {
         // Wait for an incoming connection from the client
         let incoming_conn = server.accept().await.unwrap();
         let conn = incoming_conn.await.unwrap();
 
-        let private_key_der =
-            PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(keypair.serialize_der()));
-        handle_connection_server(&conn, private_key_der).await;
+        handle_connection_server(&conn, keypair).await;
 
         conn.closed().await;
     });
 
+    let client_endpoint = create_quinn_client(&cert_chain);
+
     let client_handle = tokio::spawn(async move {
-        let mut client_endpoint = Endpoint::client("0.0.0.0:0".parse().unwrap()).unwrap();
-
-        client_endpoint.set_default_client_config(client_config);
-
         // Connect to the server
         let conn = client_endpoint
             .connect(server_addr, "localhost")
@@ -182,22 +175,15 @@ async fn demonstrate_with_quic_and_tdx() {
 async fn mutual_attestation_with_quic_and_tdx() {
     let (alice_cert, alice_key) = generate_certificate_chain();
     let (bob_cert, bob_key) = generate_certificate_chain();
-    let ((alice_server_config, alice_client_config), (bob_server_config, bob_client_config)) =
-        generate_tls_config_with_client_auth(
-            alice_cert,
-            alice_key.clone_key(),
-            bob_cert,
-            bob_key.clone_key(),
-        );
 
-    let mut alice_server =
-        Endpoint::server(alice_server_config, "127.0.0.1:0".parse().unwrap()).unwrap();
-    alice_server.set_default_client_config(alice_client_config);
+    let (alice_server, bob_server) = create_quinn_servers(
+        alice_cert,
+        alice_key.clone_key(),
+        bob_cert,
+        bob_key.clone_key(),
+    );
+
     let alice_server_addr = alice_server.local_addr().unwrap();
-
-    let mut bob_server =
-        Endpoint::server(bob_server_config, "127.0.0.1:0".parse().unwrap()).unwrap();
-    bob_server.set_default_client_config(bob_client_config);
     let bob_server_addr = bob_server.local_addr().unwrap();
 
     let alice_server_clone = alice_server.clone();
@@ -244,7 +230,7 @@ async fn mutual_attestation_with_quic_and_tdx() {
         handle_connection_client(&conn).await
     });
 
-    // Wait for both the client and server tasks to finish.
+    // Wait for all tasks to finish.
     let (res1, res2, res3, res4) = tokio::join! {
         alice_server_handle,
         alice_client_handle,
@@ -256,129 +242,6 @@ async fn mutual_attestation_with_quic_and_tdx() {
     res2.unwrap();
     res3.unwrap();
     res4.unwrap();
-}
-
-/// A helper to generate TLS configuration
-fn generate_certs(
-    keypair: &rcgen::KeyPair,
-) -> Result<(ServerConfig, ClientConfig), Box<dyn Error>> {
-    let key = keypair.serialize_der();
-
-    let cert = create_cert_der(keypair, None);
-
-    let private_key_der = PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(key.clone()));
-    let server_config = ServerConfig::with_single_cert(vec![cert.clone().into()], private_key_der)?;
-
-    let cert_der = CertificateDer::from(cert.clone());
-    let mut roots = rustls::RootCertStore::empty();
-    roots.add(cert_der)?;
-
-    let client_config = ClientConfig::new(Arc::new(
-        QuicClientConfig::try_from(
-            rustls::ClientConfig::builder()
-                .with_root_certificates(roots)
-                .with_no_client_auth(),
-        )
-        .unwrap(),
-    ));
-
-    Ok((server_config, client_config))
-}
-
-pub fn generate_certificate_chain() -> (Vec<CertificateDer<'static>>, PrivateKeyDer<'static>) {
-    let subject_alt_names = vec!["localhost".to_string()];
-    let cert_key = rcgen::generate_simple_self_signed(subject_alt_names)
-        .expect("Failed to generate self-signed certificate");
-
-    let certs = vec![CertificateDer::from(cert_key.cert)];
-    let key = PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(
-        cert_key.signing_key.serialize_der(),
-    ));
-    (certs, key)
-}
-
-pub fn generate_tls_config_with_client_auth(
-    alice_certificate_chain: Vec<CertificateDer<'static>>,
-    alice_key: PrivateKeyDer<'static>,
-    bob_certificate_chain: Vec<CertificateDer<'static>>,
-    bob_key: PrivateKeyDer<'static>,
-) -> ((ServerConfig, ClientConfig), (ServerConfig, ClientConfig)) {
-    let (alice_client_verifier, alice_root_store) =
-        client_verifier_from_remote_cert(bob_certificate_chain[0].clone());
-
-    let alice_server_config = rustls::ServerConfig::builder()
-        .with_client_cert_verifier(alice_client_verifier)
-        .with_single_cert(alice_certificate_chain.clone(), alice_key.clone_key())
-        .expect("Failed to create rustls server config");
-
-    let alice_client_config = rustls::ClientConfig::builder()
-        .with_root_certificates(alice_root_store)
-        .with_client_auth_cert(alice_certificate_chain.clone(), alice_key)
-        .unwrap();
-
-    let (bob_client_verifier, bob_root_store) =
-        client_verifier_from_remote_cert(alice_certificate_chain[0].clone());
-
-    let bob_server_config = rustls::ServerConfig::builder()
-        .with_client_cert_verifier(bob_client_verifier)
-        .with_single_cert(bob_certificate_chain.clone(), bob_key.clone_key())
-        .expect("Failed to create rustls server config");
-
-    let bob_client_config = rustls::ClientConfig::builder()
-        .with_root_certificates(bob_root_store)
-        .with_client_auth_cert(bob_certificate_chain, bob_key)
-        .unwrap();
-
-    (
-        (
-            ServerConfig::with_crypto(Arc::<QuicServerConfig>::new(
-                alice_server_config.try_into().unwrap(),
-            )),
-            ClientConfig::new(Arc::<QuicClientConfig>::new(
-                alice_client_config.try_into().unwrap(),
-            )),
-        ),
-        (
-            ServerConfig::with_crypto(Arc::<QuicServerConfig>::new(
-                bob_server_config.try_into().unwrap(),
-            )),
-            ClientConfig::new(Arc::<QuicClientConfig>::new(
-                bob_client_config.try_into().unwrap(),
-            )),
-        ),
-    )
-}
-
-fn client_verifier_from_remote_cert(
-    cert: CertificateDer<'static>,
-) -> (
-    Arc<dyn rustls::server::danger::ClientCertVerifier>,
-    rustls::RootCertStore,
-) {
-    let mut root_store = rustls::RootCertStore::empty();
-    root_store.add(cert).unwrap();
-
-    (
-        WebPkiClientVerifier::builder(Arc::new(root_store.clone()))
-            .build()
-            .unwrap(),
-        root_store,
-    )
-}
-
-/// Create a self-signed TLS certificate with the given keypair, adding an attestation_cmw
-/// extension if the data is given
-fn create_cert_der(keypair: &rcgen::KeyPair, attestation_cmw: Option<&[u8]>) -> Vec<u8> {
-    let mut params = CertificateParams::new(["localhost".to_string()]).unwrap();
-
-    if let Some(attestation) = attestation_cmw {
-        params
-            .custom_extensions
-            .push(create_cmw_attestation_extension(attestation).unwrap());
-    }
-
-    let cert = params.self_signed(keypair).unwrap();
-    cert.der().to_vec()
 }
 
 /// Create a mock quote for testing on non-TDX hardware
