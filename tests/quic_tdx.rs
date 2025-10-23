@@ -1,17 +1,20 @@
+mod helpers;
+
+use helpers::{
+    create_cert_der, create_quinn_client, create_quinn_server, create_quinn_servers,
+    generate_certificate_chain,
+};
+
 use attestation_exported_authenticators::{
-    authenticator::Authenticator, certificate_request::CertificateRequest,
-    create_cmw_attestation_extension, extract_attestation,
+    authenticator::Authenticator, certificate_request::CertificateRequest, extract_attestation,
     EXPORTER_SERVER_AUTHENTICATOR_FINISHED_KEY, EXPORTER_SERVER_AUTHENTICATOR_HANDSHAKE_CONTEXT,
 };
-use quinn::{crypto::rustls::QuicClientConfig, ClientConfig, Endpoint, ServerConfig};
 use rand_core::{OsRng, RngCore};
-use rcgen::CertificateParams;
-use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
-use std::{error::Error, sync::Arc};
+use rustls::pki_types::PrivateKeyDer;
 use tdx_quote::Quote;
 
 /// Given an incoming connection, accept a [CertificateRequest] and respond with an attestation [Authenticator]
-async fn handle_connection_server(conn: &quinn::Connection, keypair: rcgen::KeyPair) {
+async fn handle_connection_server(conn: &quinn::Connection, keypair: PrivateKeyDer<'static>) {
     // Wait for a bidirectional stream to be opened by the client
     let (mut send_stream, mut recv_stream) = conn.accept_bi().await.unwrap();
 
@@ -32,11 +35,10 @@ async fn handle_connection_server(conn: &quinn::Connection, keypair: rcgen::KeyP
     // Generate a TDX quote using the exported keying material as input
     let quote = generate_quote(keying_material);
 
-    let private_key_der = PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(keypair.serialize_der()));
-
     // TODO#1 here we should wrap the quote in a RATS Conceptual Messages Wrapper (CMW)
 
-    let cert_der = create_cert_der(&keypair, Some(&quote));
+    let rcgen_keypair: rcgen::KeyPair = (&keypair).try_into().unwrap();
+    let cert_der = create_cert_der(&rcgen_keypair, Some(&quote));
 
     let mut handshake_context_exporter = [0u8; 64];
     conn.export_keying_material(
@@ -56,7 +58,7 @@ async fn handle_connection_server(conn: &quinn::Connection, keypair: rcgen::KeyP
 
     let authenticator = Authenticator::new(
         cert_der.into(),
-        private_key_der,
+        keypair,
         &cert_request,
         handshake_context_exporter,
         finished_key_exporter,
@@ -131,11 +133,11 @@ async fn handle_connection_client(conn: &quinn::Connection) {
 
 #[tokio::test]
 async fn demonstrate_with_quic_and_tdx() {
-    let keypair = rcgen::KeyPair::generate().unwrap();
-    let (server_config, client_config) = generate_certs(&keypair).unwrap();
+    let (cert_chain, keypair) = generate_certificate_chain();
+    let server = create_quinn_server(cert_chain.clone(), keypair.clone_key(), None, false);
 
-    let server = Endpoint::server(server_config, "127.0.0.1:0".parse().unwrap()).unwrap();
     let server_addr = server.local_addr().unwrap();
+
     let server_handle = tokio::spawn(async move {
         // Wait for an incoming connection from the client
         let incoming_conn = server.accept().await.unwrap();
@@ -146,11 +148,9 @@ async fn demonstrate_with_quic_and_tdx() {
         conn.closed().await;
     });
 
+    let client_endpoint = create_quinn_client(&cert_chain);
+
     let client_handle = tokio::spawn(async move {
-        let mut client_endpoint = Endpoint::client("0.0.0.0:0".parse().unwrap()).unwrap();
-
-        client_endpoint.set_default_client_config(client_config);
-
         // Connect to the server
         let conn = client_endpoint
             .connect(server_addr, "localhost")
@@ -162,52 +162,86 @@ async fn demonstrate_with_quic_and_tdx() {
     });
 
     // Wait for both the client and server tasks to finish.
-    let (_res1, _res2) = tokio::join! {
+    let (res1, res2) = tokio::join! {
         server_handle,
         client_handle,
     };
+
+    res1.unwrap();
+    res2.unwrap();
 }
 
-/// A helper to generate TLS configuration
-fn generate_certs(
-    keypair: &rcgen::KeyPair,
-) -> Result<(ServerConfig, ClientConfig), Box<dyn Error>> {
-    let key = keypair.serialize_der();
+#[tokio::test]
+async fn mutual_attestation_with_quic_and_tdx() {
+    let (alice_cert, alice_key) = generate_certificate_chain();
+    let (bob_cert, bob_key) = generate_certificate_chain();
 
-    let cert = create_cert_der(keypair, None);
+    let (alice_server, bob_server) = create_quinn_servers(
+        alice_cert,
+        alice_key.clone_key(),
+        bob_cert,
+        bob_key.clone_key(),
+    );
 
-    let private_key_der = PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(key.clone()));
-    let server_config = ServerConfig::with_single_cert(vec![cert.clone().into()], private_key_der)?;
+    let alice_server_addr = alice_server.local_addr().unwrap();
+    let bob_server_addr = bob_server.local_addr().unwrap();
 
-    let cert_der = CertificateDer::from(cert.clone());
-    let mut roots = rustls::RootCertStore::empty();
-    roots.add(cert_der)?;
+    let alice_server_clone = alice_server.clone();
+    let alice_server_handle = tokio::spawn(async move {
+        // Wait for an incoming connection from the client
+        let incoming_conn = alice_server_clone.accept().await.unwrap();
+        let conn = incoming_conn.await.unwrap();
 
-    let client_config = ClientConfig::new(Arc::new(
-        QuicClientConfig::try_from(
-            rustls::ClientConfig::builder()
-                .with_root_certificates(roots)
-                .with_no_client_auth(),
-        )
-        .unwrap(),
-    ));
+        handle_connection_server(&conn, alice_key).await;
 
-    Ok((server_config, client_config))
-}
+        conn.closed().await;
+    });
 
-/// Create a self-signed TLS certificate with the given keypair, adding an attestation_cmw
-/// extension if the data is given
-fn create_cert_der(keypair: &rcgen::KeyPair, attestation_cmw: Option<&[u8]>) -> Vec<u8> {
-    let mut params = CertificateParams::new(["localhost".to_string()]).unwrap();
+    let bob_server_clone = bob_server.clone();
+    let bob_server_handle = tokio::spawn(async move {
+        // Wait for an incoming connection from the client
+        let incoming_conn = bob_server_clone.accept().await.unwrap();
+        let conn = incoming_conn.await.unwrap();
 
-    if let Some(attestation) = attestation_cmw {
-        params
-            .custom_extensions
-            .push(create_cmw_attestation_extension(attestation).unwrap());
-    }
+        handle_connection_server(&conn, bob_key).await;
 
-    let cert = params.self_signed(keypair).unwrap();
-    cert.der().to_vec()
+        conn.closed().await;
+    });
+
+    let alice_client_handle = tokio::spawn(async move {
+        // Connect to bob
+        let conn = alice_server
+            .connect(bob_server_addr, "localhost")
+            .unwrap()
+            .await
+            .unwrap();
+
+        handle_connection_client(&conn).await
+    });
+
+    let bob_client_handle = tokio::spawn(async move {
+        // Connect to alice
+        let conn = bob_server
+            .connect(alice_server_addr, "localhost")
+            .unwrap()
+            .await
+            .unwrap();
+
+        handle_connection_client(&conn).await
+    });
+
+    // Wait for all tasks to finish.
+    let (res1, res2, res3, res4) = tokio::join! {
+        alice_server_handle,
+        alice_client_handle,
+        bob_server_handle,
+        bob_client_handle,
+    };
+
+    res1.unwrap();
+    res2.unwrap();
+    res3.unwrap();
+    res4.unwrap();
 }
 
 /// Create a mock quote for testing on non-TDX hardware
