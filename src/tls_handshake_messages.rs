@@ -344,18 +344,18 @@ pub struct CertificateEntry {
 }
 
 impl CertificateEntry {
-    pub fn from_cert_der(cert_der: Vec<u8>) -> Self {
+    pub fn from_cert_der(cert_der: Vec<u8>, extensions: Vec<u8>) -> Self {
         Self {
             certificate_type: CertificateType::X509(cert_der),
-            extensions: Default::default(), // TODO
+            extensions,
         }
     }
 
     #[allow(dead_code)]
-    pub fn from_raw_public_key(raw_public_key: Vec<u8>) -> Self {
+    pub fn from_raw_public_key(raw_public_key: Vec<u8>, extensions: Vec<u8>) -> Self {
         Self {
             certificate_type: CertificateType::RawPublicKey(raw_public_key),
-            extensions: Default::default(), // TODO
+            extensions,
         }
     }
 
@@ -395,11 +395,19 @@ impl CertificateEntry {
             }
         }
 
-        // Write the 16-bit length prefix for extensions - currently empty
-        let extensions_len_bytes: [u8; 2] = [0x00, 0x00];
+        if self.extensions.len() > 0xFFFF {
+            panic!("Length exceeds the maximum limit for a two-byte TLS extension length (65535 bytes).");
+        }
+
+        let u16_length = self.extensions.len() as u16;
+
         cursor
-            .write_all(&extensions_len_bytes)
+            .write_all(&u16_length.to_be_bytes())
             .expect("Failed to write extensions length");
+
+        cursor
+            .write_all(&self.extensions)
+            .expect("Failed to write extensions");
 
         certificate_entry_bytes
     }
@@ -441,6 +449,7 @@ impl CertificateEntry {
         let extensions_len_bytes = &input[offset..offset + 2];
         let extensions_len =
             ((extensions_len_bytes[0] as usize) << 8) | (extensions_len_bytes[1] as usize);
+        println!("ext: {extensions_len}");
         offset += 2;
 
         // Read the extensions data based on the length
@@ -674,7 +683,7 @@ mod tests {
     fn encode_decode_certificate_entry() {
         let keypair = rcgen::KeyPair::generate().unwrap();
         let cert_der = create_cert_der(&keypair);
-        let entry = CertificateEntry::from_cert_der(cert_der.clone());
+        let entry = CertificateEntry::from_cert_der(cert_der.clone(), b"extensions".to_vec());
         let encoded = entry.encode();
         let (decoded_entry, remaining) = CertificateEntry::decode(&encoded).unwrap();
 
@@ -691,7 +700,7 @@ mod tests {
     fn encode_decode_certificate() {
         let keypair = rcgen::KeyPair::generate().unwrap();
         let cert_der = create_cert_der(&keypair);
-        let entry = CertificateEntry::from_cert_der(cert_der.clone());
+        let entry = CertificateEntry::from_cert_der(cert_der.clone(), b"extensions".to_vec());
 
         let certificate = Certificate {
             certificate_request_context: b"context".to_vec(),
@@ -709,11 +718,11 @@ mod tests {
     fn encode_decode_certificate_with_chain() {
         let keypair = rcgen::KeyPair::generate().unwrap();
         let cert_der = create_cert_der(&keypair);
-        let entry0 = CertificateEntry::from_cert_der(cert_der.clone());
+        let entry0 = CertificateEntry::from_cert_der(cert_der.clone(), b"extensions".to_vec());
 
         let keypair = rcgen::KeyPair::generate().unwrap();
         let cert_der = create_cert_der(&keypair);
-        let entry1 = CertificateEntry::from_cert_der(cert_der.clone());
+        let entry1 = CertificateEntry::from_cert_der(cert_der.clone(), b"extensions".to_vec());
 
         let certificate = Certificate {
             certificate_request_context: b"context".to_vec(),
@@ -732,7 +741,7 @@ mod tests {
         let keypair = rcgen::KeyPair::generate().unwrap();
         let cert_der = create_cert_der(&keypair);
 
-        let entry = CertificateEntry::from_cert_der(cert_der.clone());
+        let entry = CertificateEntry::from_cert_der(cert_der.clone(), b"extensions".to_vec());
 
         let certificate = Certificate {
             certificate_request_context: Default::default(),

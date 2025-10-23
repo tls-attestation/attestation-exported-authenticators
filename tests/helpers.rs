@@ -1,10 +1,8 @@
 //! Helper functions for integration tests
-use attestation_exported_authenticators::create_cmw_attestation_extension;
 use quinn::{
     crypto::rustls::{QuicClientConfig, QuicServerConfig},
     ClientConfig, ServerConfig,
 };
-use rcgen::CertificateParams;
 use rustls::{
     pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer},
     server::WebPkiClientVerifier,
@@ -22,21 +20,6 @@ pub fn generate_certificate_chain() -> (Vec<CertificateDer<'static>>, PrivateKey
         cert_key.signing_key.serialize_der(),
     ));
     (certs, key)
-}
-
-/// Create a der-encoded self-signed TLS certificate with the given keypair, adding an attestation_cmw
-/// extension if the data is given
-pub fn create_cert_der(keypair: &rcgen::KeyPair, attestation_cmw: Option<&[u8]>) -> Vec<u8> {
-    let mut params = CertificateParams::new(["localhost".to_string()]).unwrap();
-
-    if let Some(attestation) = attestation_cmw {
-        params
-            .custom_extensions
-            .push(create_cmw_attestation_extension(attestation).unwrap());
-    }
-
-    let cert = params.self_signed(keypair).unwrap();
-    cert.der().to_vec()
 }
 
 /// Setup a quinn endpoint as a client only
