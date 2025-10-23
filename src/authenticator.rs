@@ -3,9 +3,9 @@ use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use crate::{
     certificate_request::CertificateRequest,
     tls_handshake_messages::{
-        Certificate, CertificateEntry, CertificateVerify, Finished, VerificationError,
+        Certificate, CertificateEntry, CertificateVerify, Extension, Finished, VerificationError,
     },
-    DecodeError, EncodeError,
+    DecodeError, EncodeError, CMW_ATTESTATION_EXTENSION_TYPE,
 };
 
 /// An Authenticator as per RFC9261 Exported Authenticators
@@ -20,7 +20,7 @@ impl Authenticator {
     pub fn new(
         certificate_chain: Vec<CertificateDer>,
         private_key: PrivateKeyDer,
-        extensions: Vec<u8>,
+        extensions: Vec<Extension>,
         certificate_request: &CertificateRequest,
         handshake_context_exporter: [u8; 64],
         finished_key_exporter: [u8; 32],
@@ -121,11 +121,20 @@ impl Authenticator {
     }
 
     /// Get extensions from the leaf certificate
-    pub fn extensions(&self) -> Result<Vec<u8>, String> {
+    pub fn extensions(&self) -> Result<Vec<Extension>, String> {
         match self.certificate.certificate_list.first() {
             Some(certificate_entry) => Ok(certificate_entry.extensions.clone()),
             None => Err("No certificate".to_string()),
         }
+    }
+
+    pub fn get_attestation_cmw_extension(&self) -> Result<Vec<u8>, String> {
+        for extension in self.extensions()? {
+            if extension.extension_type == CMW_ATTESTATION_EXTENSION_TYPE {
+                return Ok(extension.extension_data);
+            }
+        }
+        Err("No attestation_cmw extension found".to_string())
     }
 }
 

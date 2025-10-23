@@ -5,7 +5,7 @@ use helpers::{
 };
 
 use attestation_exported_authenticators::{
-    authenticator::Authenticator, certificate_request::CertificateRequest,
+    authenticator::Authenticator, certificate_request::CertificateRequest, Extension,
     EXPORTER_SERVER_AUTHENTICATOR_FINISHED_KEY, EXPORTER_SERVER_AUTHENTICATOR_HANDSHAKE_CONTEXT,
 };
 use rand_core::{OsRng, RngCore};
@@ -59,10 +59,11 @@ async fn handle_connection_server(
     )
     .unwrap();
 
+    let extensions = vec![Extension::new_attestation_cmw(quote)];
     let authenticator = Authenticator::new(
         certificate_chain,
         private_key,
-        quote, // TODO this should be encoded as an extension list
+        extensions,
         &cert_request,
         handshake_context_exporter,
         finished_key_exporter,
@@ -128,7 +129,7 @@ async fn handle_connection_client(conn: &quinn::Connection) {
         )
         .is_ok());
 
-    let quote_bytes = authenticator.extensions().unwrap();
+    let quote_bytes = authenticator.get_attestation_cmw_extension().unwrap();
 
     let quote = Quote::from_bytes(&quote_bytes).unwrap();
 

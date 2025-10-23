@@ -18,7 +18,10 @@ use sha2::{Digest, Sha256};
 use thiserror::Error;
 use x509_parser::prelude::*;
 
-use crate::{certificate_request::CertificateRequest, DecodeError, EncodeError};
+use crate::{
+    certificate_request::CertificateRequest, DecodeError, EncodeError,
+    CMW_ATTESTATION_EXTENSION_TYPE,
+};
 
 /// Represents the different possible handshake message types
 // Dead code allowed because not all variants are constructed
@@ -340,11 +343,11 @@ pub enum CertificateType {
 #[derive(Debug, PartialEq, Clone)]
 pub struct CertificateEntry {
     pub certificate_type: CertificateType,
-    pub extensions: Vec<u8>,
+    pub extensions: Vec<Extension>,
 }
 
 impl CertificateEntry {
-    pub fn from_cert_der(cert_der: Vec<u8>, extensions: Vec<u8>) -> Self {
+    pub fn from_cert_der(cert_der: Vec<u8>, extensions: Vec<Extension>) -> Self {
         Self {
             certificate_type: CertificateType::X509(cert_der),
             extensions,
@@ -352,7 +355,7 @@ impl CertificateEntry {
     }
 
     #[allow(dead_code)]
-    pub fn from_raw_public_key(raw_public_key: Vec<u8>, extensions: Vec<u8>) -> Self {
+    pub fn from_raw_public_key(raw_public_key: Vec<u8>, extensions: Vec<Extension>) -> Self {
         Self {
             certificate_type: CertificateType::RawPublicKey(raw_public_key),
             extensions,
@@ -395,18 +398,24 @@ impl CertificateEntry {
             }
         }
 
-        if self.extensions.len() > 0xFFFF {
+        let mut encoded_extensions = Vec::new();
+
+        for extension in self.extensions.iter() {
+            encoded_extensions.extend_from_slice(&extension.encode().unwrap());
+        }
+
+        if encoded_extensions.len() > 0xFFFF {
             panic!("Length exceeds the maximum limit for a two-byte TLS extension length (65535 bytes).");
         }
 
-        let u16_length = self.extensions.len() as u16;
+        let u16_length = encoded_extensions.len() as u16;
 
         cursor
             .write_all(&u16_length.to_be_bytes())
             .expect("Failed to write extensions length");
 
         cursor
-            .write_all(&self.extensions)
+            .write_all(&encoded_extensions)
             .expect("Failed to write extensions");
 
         certificate_entry_bytes
@@ -449,7 +458,6 @@ impl CertificateEntry {
         let extensions_len_bytes = &input[offset..offset + 2];
         let extensions_len =
             ((extensions_len_bytes[0] as usize) << 8) | (extensions_len_bytes[1] as usize);
-        println!("ext: {extensions_len}");
         offset += 2;
 
         // Read the extensions data based on the length
@@ -459,8 +467,15 @@ impl CertificateEntry {
                 "Input too short for extensions data",
             ));
         }
-        let extensions = input[offset..offset + extensions_len].to_vec();
+        let mut encoded_extensions = &input[offset..offset + extensions_len];
         offset += extensions_len;
+
+        let mut extensions = Vec::new();
+        while !encoded_extensions.is_empty() {
+            let (extension, remaining) = Extension::decode(encoded_extensions).unwrap();
+            extensions.push(extension);
+            encoded_extensions = remaining;
+        }
 
         let entry = CertificateEntry {
             certificate_type,
@@ -559,6 +574,67 @@ impl Certificate {
             Certificate {
                 certificate_request_context,
                 certificate_list,
+            },
+            remaining,
+        ))
+    }
+}
+
+#[derive(Debug, PartialEq, Clone)]
+pub struct Extension {
+    pub extension_type: [u8; 2],
+    pub extension_data: Vec<u8>,
+}
+
+impl Extension {
+    pub fn new_attestation_cmw(data: Vec<u8>) -> Self {
+        Self {
+            extension_type: CMW_ATTESTATION_EXTENSION_TYPE,
+            extension_data: data,
+        }
+    }
+
+    pub fn encode(&self) -> Result<Vec<u8>, EncodeError> {
+        let mut extension_bytes = Vec::new();
+        let mut cursor = Cursor::new(&mut extension_bytes);
+
+        cursor.write_all(&self.extension_type)?;
+
+        if self.extension_data.len() > 0xFFFF {
+            panic!("Length exceeds the maximum limit for a two-byte TLS extension length (65535 bytes).");
+        }
+
+        let u16_length = self.extension_data.len() as u16;
+
+        cursor.write_all(&u16_length.to_be_bytes())?;
+        cursor.write_all(&self.extension_data)?;
+
+        Ok(extension_bytes)
+    }
+
+    pub fn decode(input: &[u8]) -> Result<(Self, &[u8]), DecodeError> {
+        let mut cursor = Cursor::new(input);
+
+        let mut extension_type = [0; 2];
+        cursor.read_exact(&mut extension_type)?;
+
+        let mut length_bytes = [0; 2];
+        cursor.read_exact(&mut length_bytes)?;
+        let length = u16::from_be_bytes(length_bytes);
+
+        let mut extension_data = vec![0u8; length.into()];
+        cursor.read_exact(&mut extension_data)?;
+
+        let mut remaining = Vec::new();
+        cursor.read_to_end(&mut remaining)?;
+
+        let position = cursor.position() as usize;
+        let remaining = &input[position..];
+
+        Ok((
+            Self {
+                extension_type,
+                extension_data,
             },
             remaining,
         ))
@@ -683,7 +759,11 @@ mod tests {
     fn encode_decode_certificate_entry() {
         let keypair = rcgen::KeyPair::generate().unwrap();
         let cert_der = create_cert_der(&keypair);
-        let entry = CertificateEntry::from_cert_der(cert_der.clone(), b"extensions".to_vec());
+        let extensions = vec![Extension {
+            extension_type: [0; 2],
+            extension_data: b"foo".to_vec(),
+        }];
+        let entry = CertificateEntry::from_cert_der(cert_der.clone(), extensions);
         let encoded = entry.encode();
         let (decoded_entry, remaining) = CertificateEntry::decode(&encoded).unwrap();
 
@@ -700,7 +780,7 @@ mod tests {
     fn encode_decode_certificate() {
         let keypair = rcgen::KeyPair::generate().unwrap();
         let cert_der = create_cert_der(&keypair);
-        let entry = CertificateEntry::from_cert_der(cert_der.clone(), b"extensions".to_vec());
+        let entry = CertificateEntry::from_cert_der(cert_der.clone(), Vec::new());
 
         let certificate = Certificate {
             certificate_request_context: b"context".to_vec(),
@@ -718,11 +798,11 @@ mod tests {
     fn encode_decode_certificate_with_chain() {
         let keypair = rcgen::KeyPair::generate().unwrap();
         let cert_der = create_cert_der(&keypair);
-        let entry0 = CertificateEntry::from_cert_der(cert_der.clone(), b"extensions".to_vec());
+        let entry0 = CertificateEntry::from_cert_der(cert_der.clone(), Vec::new());
 
         let keypair = rcgen::KeyPair::generate().unwrap();
         let cert_der = create_cert_der(&keypair);
-        let entry1 = CertificateEntry::from_cert_der(cert_der.clone(), b"extensions".to_vec());
+        let entry1 = CertificateEntry::from_cert_der(cert_der.clone(), Vec::new());
 
         let certificate = Certificate {
             certificate_request_context: b"context".to_vec(),
@@ -741,7 +821,7 @@ mod tests {
         let keypair = rcgen::KeyPair::generate().unwrap();
         let cert_der = create_cert_der(&keypair);
 
-        let entry = CertificateEntry::from_cert_der(cert_der.clone(), b"extensions".to_vec());
+        let entry = CertificateEntry::from_cert_der(cert_der.clone(), Vec::new());
 
         let certificate = Certificate {
             certificate_request_context: Default::default(),
