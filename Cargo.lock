@@ -79,6 +79,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "attested-quic"
+version = "0.1.0"
+dependencies = [
+ "attestation-exported-authenticators",
+ "configfs-tsm",
+ "hex",
+ "quinn",
+ "rand_core 0.6.4",
+ "rcgen",
+ "rustls",
+ "tdx-quote",
+ "tokio",
+]
+
+[[package]]
 name = "autocfg"
 version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
