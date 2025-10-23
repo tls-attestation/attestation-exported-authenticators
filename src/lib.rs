@@ -26,13 +26,13 @@ pub static EXPORTER_CLIENT_AUTHENTICATOR_FINISHED_KEY: &[u8] =
 pub static EXPORTER_SERVER_AUTHENTICATOR_FINISHED_KEY: &[u8] =
     b"EXPORTER-server authenticator finished key";
 
-/// Returns the OID for the cwm attestation
+// /// Returns the OID for the cwm attestation
 // TODO #5 replace with the acutal OID for the cwm_attestation extension
 // pub fn oid_cmw_attestation() -> Oid<'static> {
 //     oid!(1.3.6 .1 .4 .1 .42424242 .1)
 // }
 
-/// Given CMW wrapped attestation data create a [CustomExtension]
+// /// Given CMW wrapped attestation data create a [CustomExtension]
 // pub fn create_cmw_attestation_extension(
 //     cmw_wrapped_attestation: &[u8],
 // ) -> Result<CustomExtension, CmwAttestationCertifcateExtensionError> {
