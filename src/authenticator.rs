@@ -1,4 +1,5 @@
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
+use thiserror::Error;
 
 use crate::{
     certificate_request::CertificateRequest,
@@ -66,6 +67,8 @@ impl Authenticator {
         })
     }
 
+    /// Create a new authenticator with a cmw_attestation extension.
+    /// Takes an encoded CMW message.
     pub fn new_with_cmw_attestation(
         certificate_chain: Vec<CertificateDer>,
         private_key: PrivateKeyDer,
@@ -139,21 +142,30 @@ impl Authenticator {
     }
 
     /// Get extensions from the leaf certificate
-    pub fn extensions(&self) -> Result<Vec<Extension>, String> {
+    pub fn extensions(&self) -> Result<Vec<Extension>, AuthenticatorError> {
         match self.certificate.certificate_list.first() {
             Some(certificate_entry) => Ok(certificate_entry.extensions.clone()),
-            None => Err("No certificate".to_string()),
+            None => Err(AuthenticatorError::NoCertificate),
         }
     }
 
-    pub fn get_attestation_cmw_extension(&self) -> Result<Vec<u8>, String> {
+    /// Get a cwm_attestation extension if present
+    pub fn get_attestation_cmw_extension(&self) -> Result<Vec<u8>, AuthenticatorError> {
         for extension in self.extensions()? {
             if extension.extension_type == CMW_ATTESTATION_EXTENSION_TYPE {
                 return Ok(extension.extension_data);
             }
         }
-        Err("No attestation_cmw extension found".to_string())
+        Err(AuthenticatorError::NoExtension)
     }
+}
+
+#[derive(Error, Debug)]
+pub enum AuthenticatorError {
+    #[error("Authenticator has no certificate")]
+    NoCertificate,
+    #[error("Requested extension not present")]
+    NoExtension,
 }
 
 #[cfg(test)]
