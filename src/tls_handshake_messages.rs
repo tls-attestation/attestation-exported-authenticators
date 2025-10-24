@@ -2,7 +2,7 @@
 //!
 //! ['The illustrated TLS 1.3 Connection'](https://tls13.xargs.org) is a useful resource for these
 
-use std::io::{self, Cursor, Read, Write};
+use std::io::{Cursor, Read, Write};
 
 use hmac::{Hmac, Mac};
 use p256::{
@@ -18,7 +18,10 @@ use sha2::{Digest, Sha256};
 use thiserror::Error;
 use x509_parser::prelude::*;
 
-use crate::{certificate_request::CertificateRequest, DecodeError, EncodeError};
+use crate::{
+    certificate_request::CertificateRequest, DecodeError, EncodeError,
+    CMW_ATTESTATION_EXTENSION_TYPE,
+};
 
 /// Represents the different possible handshake message types
 // Dead code allowed because not all variants are constructed
@@ -340,22 +343,22 @@ pub enum CertificateType {
 #[derive(Debug, PartialEq, Clone)]
 pub struct CertificateEntry {
     pub certificate_type: CertificateType,
-    pub extensions: Vec<u8>,
+    pub extensions: Vec<Extension>,
 }
 
 impl CertificateEntry {
-    pub fn from_cert_der(cert_der: Vec<u8>) -> Self {
+    pub fn from_cert_der(cert_der: Vec<u8>, extensions: Vec<Extension>) -> Self {
         Self {
             certificate_type: CertificateType::X509(cert_der),
-            extensions: Default::default(), // TODO
+            extensions,
         }
     }
 
     #[allow(dead_code)]
-    pub fn from_raw_public_key(raw_public_key: Vec<u8>) -> Self {
+    pub fn from_raw_public_key(raw_public_key: Vec<u8>, extensions: Vec<Extension>) -> Self {
         Self {
             certificate_type: CertificateType::RawPublicKey(raw_public_key),
-            extensions: Default::default(), // TODO
+            extensions,
         }
     }
 
@@ -367,49 +370,64 @@ impl CertificateEntry {
     }
 
     /// Encode a certificate message with length prefix
-    pub fn encode(&self) -> Vec<u8> {
+    pub fn encode(&self) -> Result<Vec<u8>, EncodeError> {
         let mut certificate_entry_bytes = Vec::new();
         let mut cursor = Cursor::new(&mut certificate_entry_bytes);
 
-        match &self.certificate_type {
-            CertificateType::X509(cert_der) => {
-                // Write the 24-bit length prefix for the DER certificate data.
-                let der_cert_len = cert_der.len();
-                assert!(der_cert_len < 0x00FFFFFF, "Certificate data too large");
-                let len_bytes = [
-                    (der_cert_len >> 16) as u8,
-                    (der_cert_len >> 8) as u8,
-                    der_cert_len as u8,
-                ];
-                cursor
-                    .write_all(&len_bytes)
-                    .expect("Failed to write certificate length");
+        let cert_data = match &self.certificate_type {
+            CertificateType::X509(cert_der) => cert_der,
+            CertificateType::RawPublicKey(raw_public_key) => raw_public_key,
+        };
 
-                // Write the actual DER certificate data.
-                cursor
-                    .write_all(cert_der)
-                    .expect("Failed to write certificate data");
-            }
-            _ => {
-                todo!()
-            }
+        // Write the 24-bit length prefix for the certificate data
+        let cert_data_len = cert_data.len();
+        if cert_data_len > 0x00FFFFFF {
+            return Err(EncodeError::CertificateEntryTooLong);
+        }
+        let len_bytes = [
+            (cert_data_len >> 16) as u8,
+            (cert_data_len >> 8) as u8,
+            cert_data_len as u8,
+        ];
+        cursor.write_all(&len_bytes)?;
+
+        // Write the actual certificate data
+        cursor.write_all(cert_data)?;
+
+        let mut encoded_extensions = Vec::new();
+
+        for extension in self.extensions.iter() {
+            encoded_extensions.extend_from_slice(&extension.encode()?);
         }
 
-        // Write the 16-bit length prefix for extensions - currently empty
-        let extensions_len_bytes: [u8; 2] = [0x00, 0x00];
-        cursor
-            .write_all(&extensions_len_bytes)
-            .expect("Failed to write extensions length");
+        if encoded_extensions.len() > 0xFFFF {
+            return Err(EncodeError::ExtensionTooLong);
+        }
+        let u16_length = encoded_extensions.len() as u16;
+        cursor.write_all(&u16_length.to_be_bytes())?;
 
-        certificate_entry_bytes
+        cursor.write_all(&encoded_extensions)?;
+
+        Ok(certificate_entry_bytes)
     }
 
-    pub fn decode(input: &[u8]) -> Result<(Self, &[u8]), io::Error> {
+    /// Decode, assuming certificate is given as x509
+    /// In the context of exported authenticators, this is generally what is used
+    pub fn decode_x509(input: &[u8]) -> Result<(Self, &[u8]), DecodeError> {
+        Self::decode(input, true)
+    }
+
+    #[allow(dead_code)]
+    /// Decode, assuming certificate is given as a raw public key
+    pub fn decode_raw_public_key(input: &[u8]) -> Result<(Self, &[u8]), DecodeError> {
+        Self::decode(input, false)
+    }
+
+    fn decode(input: &[u8], is_x509: bool) -> Result<(Self, &[u8]), DecodeError> {
         // Read the 3-byte length prefix for the certificate
         if input.len() < 3 {
-            return Err(io::Error::new(
-                io::ErrorKind::UnexpectedEof,
-                "Input too short for certificate length prefix",
+            return Err(DecodeError::BadLength(
+                "Input too short for certificate length prefix".to_string(),
             ));
         }
         let cert_len_bytes = &input[0..3];
@@ -420,22 +438,23 @@ impl CertificateEntry {
 
         // Read the certificate data based on the length
         if input.len() < offset + cert_len {
-            return Err(io::Error::new(
-                io::ErrorKind::UnexpectedEof,
-                "Input too short for certificate data",
+            return Err(DecodeError::BadLength(
+                "Input too short for certificate data".to_string(),
             ));
         }
-        let cert_der = input[offset..offset + cert_len].to_vec();
+        let cert_data = input[offset..offset + cert_len].to_vec();
         offset += cert_len;
 
-        // For this specific implementation, we assume the certificate type is X509
-        let certificate_type = CertificateType::X509(cert_der);
+        let certificate_type = if is_x509 {
+            CertificateType::X509(cert_data)
+        } else {
+            CertificateType::RawPublicKey(cert_data)
+        };
 
         // Read the 2-byte length prefix for extensions
         if input.len() < offset + 2 {
-            return Err(io::Error::new(
-                io::ErrorKind::UnexpectedEof,
-                "Input too short for extensions length prefix",
+            return Err(DecodeError::BadLength(
+                "Input too short for extensions length prefix".to_string(),
             ));
         }
         let extensions_len_bytes = &input[offset..offset + 2];
@@ -445,13 +464,19 @@ impl CertificateEntry {
 
         // Read the extensions data based on the length
         if input.len() < offset + extensions_len {
-            return Err(io::Error::new(
-                io::ErrorKind::UnexpectedEof,
-                "Input too short for extensions data",
+            return Err(DecodeError::BadLength(
+                "Input too short for extensions data".to_string(),
             ));
         }
-        let extensions = input[offset..offset + extensions_len].to_vec();
+        let mut encoded_extensions = &input[offset..offset + extensions_len];
         offset += extensions_len;
+
+        let mut extensions = Vec::new();
+        while !encoded_extensions.is_empty() {
+            let (extension, remaining) = Extension::decode(encoded_extensions)?;
+            extensions.push(extension);
+            encoded_extensions = remaining;
+        }
 
         let entry = CertificateEntry {
             certificate_type,
@@ -485,7 +510,7 @@ impl Certificate {
             let mut certificate_list_bytes = Vec::new();
             let mut cursor = Cursor::new(&mut certificate_list_bytes);
             for cert in self.certificate_list.iter() {
-                let encoded_cert_entry = cert.encode();
+                let encoded_cert_entry = cert.encode()?;
 
                 // Write the `CertificateEntry` bytes
                 cursor.write_all(&encoded_cert_entry)?;
@@ -541,7 +566,7 @@ impl Certificate {
         // Decode the CertificateEntrys from the list data
         let mut certificate_list = Vec::new();
         while !cert_list_data.is_empty() {
-            let (certificate_entry, remaining) = CertificateEntry::decode(&cert_list_data)?;
+            let (certificate_entry, remaining) = CertificateEntry::decode_x509(&cert_list_data)?;
             certificate_list.push(certificate_entry);
             cert_list_data = remaining.to_vec();
         }
@@ -556,6 +581,72 @@ impl Certificate {
     }
 }
 
+/// Represents an extension as given in a [CertificateEntry]
+#[derive(Debug, PartialEq, Clone)]
+pub struct Extension {
+    pub extension_type: [u8; 2],
+    pub extension_data: Vec<u8>,
+}
+
+impl Extension {
+    /// Create a `attestation_cmw` extension with the given payload
+    pub fn new_attestation_cmw(data: Vec<u8>) -> Self {
+        Self {
+            extension_type: CMW_ATTESTATION_EXTENSION_TYPE,
+            extension_data: data,
+        }
+    }
+
+    /// Serialize to bytes
+    pub fn encode(&self) -> Result<Vec<u8>, EncodeError> {
+        let mut extension_bytes = Vec::new();
+        let mut cursor = Cursor::new(&mut extension_bytes);
+
+        cursor.write_all(&self.extension_type)?;
+
+        if self.extension_data.len() > 0xFFFF {
+            return Err(EncodeError::ExtensionTooLong);
+        }
+
+        let u16_length = self.extension_data.len() as u16;
+
+        cursor.write_all(&u16_length.to_be_bytes())?;
+        cursor.write_all(&self.extension_data)?;
+
+        Ok(extension_bytes)
+    }
+
+    /// Deserialize from bytes
+    pub fn decode(input: &[u8]) -> Result<(Self, &[u8]), DecodeError> {
+        let mut cursor = Cursor::new(input);
+
+        let mut extension_type = [0; 2];
+        cursor.read_exact(&mut extension_type)?;
+
+        let mut length_bytes = [0; 2];
+        cursor.read_exact(&mut length_bytes)?;
+        let length = u16::from_be_bytes(length_bytes);
+
+        let mut extension_data = vec![0u8; length.into()];
+        cursor.read_exact(&mut extension_data)?;
+
+        let mut remaining = Vec::new();
+        cursor.read_to_end(&mut remaining)?;
+
+        let position = cursor.position() as usize;
+        let remaining = &input[position..];
+
+        Ok((
+            Self {
+                extension_type,
+                extension_data,
+            },
+            remaining,
+        ))
+    }
+}
+
+/// An error when verifying a [CertificateVerify]
 #[derive(Error, Debug)]
 pub enum VerificationError {
     #[error("Signature verification: {0}")]
@@ -674,9 +765,13 @@ mod tests {
     fn encode_decode_certificate_entry() {
         let keypair = rcgen::KeyPair::generate().unwrap();
         let cert_der = create_cert_der(&keypair);
-        let entry = CertificateEntry::from_cert_der(cert_der.clone());
-        let encoded = entry.encode();
-        let (decoded_entry, remaining) = CertificateEntry::decode(&encoded).unwrap();
+        let extensions = vec![Extension {
+            extension_type: [0; 2],
+            extension_data: b"foo".to_vec(),
+        }];
+        let entry = CertificateEntry::from_cert_der(cert_der.clone(), extensions);
+        let encoded = entry.encode().unwrap();
+        let (decoded_entry, remaining) = CertificateEntry::decode_x509(&encoded).unwrap();
 
         if let CertificateType::X509(decoded_cert) = decoded_entry.certificate_type {
             assert_eq!(cert_der, decoded_cert);
@@ -691,7 +786,7 @@ mod tests {
     fn encode_decode_certificate() {
         let keypair = rcgen::KeyPair::generate().unwrap();
         let cert_der = create_cert_der(&keypair);
-        let entry = CertificateEntry::from_cert_der(cert_der.clone());
+        let entry = CertificateEntry::from_cert_der(cert_der.clone(), Vec::new());
 
         let certificate = Certificate {
             certificate_request_context: b"context".to_vec(),
@@ -709,11 +804,11 @@ mod tests {
     fn encode_decode_certificate_with_chain() {
         let keypair = rcgen::KeyPair::generate().unwrap();
         let cert_der = create_cert_der(&keypair);
-        let entry0 = CertificateEntry::from_cert_der(cert_der.clone());
+        let entry0 = CertificateEntry::from_cert_der(cert_der.clone(), Vec::new());
 
         let keypair = rcgen::KeyPair::generate().unwrap();
         let cert_der = create_cert_der(&keypair);
-        let entry1 = CertificateEntry::from_cert_der(cert_der.clone());
+        let entry1 = CertificateEntry::from_cert_der(cert_der.clone(), Vec::new());
 
         let certificate = Certificate {
             certificate_request_context: b"context".to_vec(),
@@ -732,7 +827,7 @@ mod tests {
         let keypair = rcgen::KeyPair::generate().unwrap();
         let cert_der = create_cert_der(&keypair);
 
-        let entry = CertificateEntry::from_cert_der(cert_der.clone());
+        let entry = CertificateEntry::from_cert_der(cert_der.clone(), Vec::new());
 
         let certificate = Certificate {
             certificate_request_context: Default::default(),
