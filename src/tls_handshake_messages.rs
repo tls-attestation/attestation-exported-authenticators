@@ -374,25 +374,25 @@ impl CertificateEntry {
         let mut certificate_entry_bytes = Vec::new();
         let mut cursor = Cursor::new(&mut certificate_entry_bytes);
 
-        match &self.certificate_type {
-            CertificateType::X509(cert_der) => {
-                // Write the 24-bit length prefix for the DER certificate data
-                let der_cert_len = cert_der.len();
-                assert!(der_cert_len < 0x00FFFFFF, "Certificate data too large");
-                let len_bytes = [
-                    (der_cert_len >> 16) as u8,
-                    (der_cert_len >> 8) as u8,
-                    der_cert_len as u8,
-                ];
-                cursor.write_all(&len_bytes)?;
+        let cert_data = match &self.certificate_type {
+            CertificateType::X509(cert_der) => cert_der,
+            CertificateType::RawPublicKey(raw_public_key) => raw_public_key,
+        };
 
-                // Write the actual DER certificate data
-                cursor.write_all(cert_der)?;
-            }
-            _ => {
-                todo!()
-            }
+        // Write the 24-bit length prefix for the certificate data
+        let cert_data_len = cert_data.len();
+        if cert_data_len > 0x00FFFFFF {
+            return Err(EncodeError::CertificateEntryTooLong);
         }
+        let len_bytes = [
+            (cert_data_len >> 16) as u8,
+            (cert_data_len >> 8) as u8,
+            cert_data_len as u8,
+        ];
+        cursor.write_all(&len_bytes)?;
+
+        // Write the actual certificate data
+        cursor.write_all(cert_data)?;
 
         let mut encoded_extensions = Vec::new();
 
@@ -411,7 +411,19 @@ impl CertificateEntry {
         Ok(certificate_entry_bytes)
     }
 
-    pub fn decode(input: &[u8]) -> Result<(Self, &[u8]), DecodeError> {
+    /// Decode, assuming certificate is given as x509
+    /// In the context of exported authenticators, this is generally what is used
+    pub fn decode_x509(input: &[u8]) -> Result<(Self, &[u8]), DecodeError> {
+        Self::decode(input, true)
+    }
+
+    #[allow(dead_code)]
+    /// Decode, assuming certificate is given as a raw public key
+    pub fn decode_raw_public_key(input: &[u8]) -> Result<(Self, &[u8]), DecodeError> {
+        Self::decode(input, false)
+    }
+
+    fn decode(input: &[u8], is_x509: bool) -> Result<(Self, &[u8]), DecodeError> {
         // Read the 3-byte length prefix for the certificate
         if input.len() < 3 {
             return Err(DecodeError::BadLength(
@@ -430,11 +442,14 @@ impl CertificateEntry {
                 "Input too short for certificate data".to_string(),
             ));
         }
-        let cert_der = input[offset..offset + cert_len].to_vec();
+        let cert_data = input[offset..offset + cert_len].to_vec();
         offset += cert_len;
 
-        // For this specific implementation, we assume the certificate type is X509
-        let certificate_type = CertificateType::X509(cert_der);
+        let certificate_type = if is_x509 {
+            CertificateType::X509(cert_data)
+        } else {
+            CertificateType::RawPublicKey(cert_data)
+        };
 
         // Read the 2-byte length prefix for extensions
         if input.len() < offset + 2 {
@@ -551,7 +566,7 @@ impl Certificate {
         // Decode the CertificateEntrys from the list data
         let mut certificate_list = Vec::new();
         while !cert_list_data.is_empty() {
-            let (certificate_entry, remaining) = CertificateEntry::decode(&cert_list_data)?;
+            let (certificate_entry, remaining) = CertificateEntry::decode_x509(&cert_list_data)?;
             certificate_list.push(certificate_entry);
             cert_list_data = remaining.to_vec();
         }
@@ -587,7 +602,7 @@ impl Extension {
         cursor.write_all(&self.extension_type)?;
 
         if self.extension_data.len() > 0xFFFF {
-            panic!("Length exceeds the maximum limit for a two-byte TLS extension length (65535 bytes).");
+            return Err(EncodeError::ExtensionTooLong);
         }
 
         let u16_length = self.extension_data.len() as u16;
@@ -751,7 +766,7 @@ mod tests {
         }];
         let entry = CertificateEntry::from_cert_der(cert_der.clone(), extensions);
         let encoded = entry.encode().unwrap();
-        let (decoded_entry, remaining) = CertificateEntry::decode(&encoded).unwrap();
+        let (decoded_entry, remaining) = CertificateEntry::decode_x509(&encoded).unwrap();
 
         if let CertificateType::X509(decoded_cert) = decoded_entry.certificate_type {
             assert_eq!(cert_der, decoded_cert);
