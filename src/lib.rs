@@ -23,7 +23,7 @@ pub static EXPORTER_SERVER_AUTHENTICATOR_FINISHED_KEY: &[u8] =
     b"EXPORTER-server authenticator finished key";
 
 /// Extension type for cmw_attestion extension
-// TODO what should this be
+// TODO #28 what should this be
 pub static CMW_ATTESTATION_EXTENSION_TYPE: [u8; 2] = [0; 2];
 
 /// An error when handling a cmw_attestion certificate extension
