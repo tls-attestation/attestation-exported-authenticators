@@ -581,6 +581,7 @@ impl Certificate {
     }
 }
 
+/// Represents an extension as given in a [CertificateEntry]
 #[derive(Debug, PartialEq, Clone)]
 pub struct Extension {
     pub extension_type: [u8; 2],
@@ -588,6 +589,7 @@ pub struct Extension {
 }
 
 impl Extension {
+    /// Create a `attestation_cmw` extension with the given payload
     pub fn new_attestation_cmw(data: Vec<u8>) -> Self {
         Self {
             extension_type: CMW_ATTESTATION_EXTENSION_TYPE,
@@ -595,6 +597,7 @@ impl Extension {
         }
     }
 
+    /// Serialize to bytes
     pub fn encode(&self) -> Result<Vec<u8>, EncodeError> {
         let mut extension_bytes = Vec::new();
         let mut cursor = Cursor::new(&mut extension_bytes);
@@ -613,6 +616,7 @@ impl Extension {
         Ok(extension_bytes)
     }
 
+    /// Deserialize from bytes
     pub fn decode(input: &[u8]) -> Result<(Self, &[u8]), DecodeError> {
         let mut cursor = Cursor::new(input);
 
@@ -642,6 +646,7 @@ impl Extension {
     }
 }
 
+/// An error when verifying a [CertificateVerify]
 #[derive(Error, Debug)]
 pub enum VerificationError {
     #[error("Signature verification: {0}")]
