@@ -62,6 +62,8 @@ pub enum EncodeError {
     CertificateEntryTooLong,
     #[error("Length must be less than 2^24-1 bytes")]
     TooLong,
+    #[error("Extension length must be less than 65535 bytes.")]
+    ExtensionTooLong,
 }
 
 /// An error when decoding a message

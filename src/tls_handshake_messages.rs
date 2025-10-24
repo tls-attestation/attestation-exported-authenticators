@@ -2,7 +2,7 @@
 //!
 //! ['The illustrated TLS 1.3 Connection'](https://tls13.xargs.org) is a useful resource for these
 
-use std::io::{self, Cursor, Read, Write};
+use std::io::{Cursor, Read, Write};
 
 use hmac::{Hmac, Mac};
 use p256::{
@@ -370,13 +370,13 @@ impl CertificateEntry {
     }
 
     /// Encode a certificate message with length prefix
-    pub fn encode(&self) -> Vec<u8> {
+    pub fn encode(&self) -> Result<Vec<u8>, EncodeError> {
         let mut certificate_entry_bytes = Vec::new();
         let mut cursor = Cursor::new(&mut certificate_entry_bytes);
 
         match &self.certificate_type {
             CertificateType::X509(cert_der) => {
-                // Write the 24-bit length prefix for the DER certificate data.
+                // Write the 24-bit length prefix for the DER certificate data
                 let der_cert_len = cert_der.len();
                 assert!(der_cert_len < 0x00FFFFFF, "Certificate data too large");
                 let len_bytes = [
@@ -384,14 +384,10 @@ impl CertificateEntry {
                     (der_cert_len >> 8) as u8,
                     der_cert_len as u8,
                 ];
-                cursor
-                    .write_all(&len_bytes)
-                    .expect("Failed to write certificate length");
+                cursor.write_all(&len_bytes)?;
 
-                // Write the actual DER certificate data.
-                cursor
-                    .write_all(cert_der)
-                    .expect("Failed to write certificate data");
+                // Write the actual DER certificate data
+                cursor.write_all(cert_der)?;
             }
             _ => {
                 todo!()
@@ -401,32 +397,25 @@ impl CertificateEntry {
         let mut encoded_extensions = Vec::new();
 
         for extension in self.extensions.iter() {
-            encoded_extensions.extend_from_slice(&extension.encode().unwrap());
+            encoded_extensions.extend_from_slice(&extension.encode()?);
         }
 
         if encoded_extensions.len() > 0xFFFF {
-            panic!("Length exceeds the maximum limit for a two-byte TLS extension length (65535 bytes).");
+            return Err(EncodeError::ExtensionTooLong);
         }
-
         let u16_length = encoded_extensions.len() as u16;
+        cursor.write_all(&u16_length.to_be_bytes())?;
 
-        cursor
-            .write_all(&u16_length.to_be_bytes())
-            .expect("Failed to write extensions length");
+        cursor.write_all(&encoded_extensions)?;
 
-        cursor
-            .write_all(&encoded_extensions)
-            .expect("Failed to write extensions");
-
-        certificate_entry_bytes
+        Ok(certificate_entry_bytes)
     }
 
-    pub fn decode(input: &[u8]) -> Result<(Self, &[u8]), io::Error> {
+    pub fn decode(input: &[u8]) -> Result<(Self, &[u8]), DecodeError> {
         // Read the 3-byte length prefix for the certificate
         if input.len() < 3 {
-            return Err(io::Error::new(
-                io::ErrorKind::UnexpectedEof,
-                "Input too short for certificate length prefix",
+            return Err(DecodeError::BadLength(
+                "Input too short for certificate length prefix".to_string(),
             ));
         }
         let cert_len_bytes = &input[0..3];
@@ -437,9 +426,8 @@ impl CertificateEntry {
 
         // Read the certificate data based on the length
         if input.len() < offset + cert_len {
-            return Err(io::Error::new(
-                io::ErrorKind::UnexpectedEof,
-                "Input too short for certificate data",
+            return Err(DecodeError::BadLength(
+                "Input too short for certificate data".to_string(),
             ));
         }
         let cert_der = input[offset..offset + cert_len].to_vec();
@@ -450,9 +438,8 @@ impl CertificateEntry {
 
         // Read the 2-byte length prefix for extensions
         if input.len() < offset + 2 {
-            return Err(io::Error::new(
-                io::ErrorKind::UnexpectedEof,
-                "Input too short for extensions length prefix",
+            return Err(DecodeError::BadLength(
+                "Input too short for extensions length prefix".to_string(),
             ));
         }
         let extensions_len_bytes = &input[offset..offset + 2];
@@ -462,9 +449,8 @@ impl CertificateEntry {
 
         // Read the extensions data based on the length
         if input.len() < offset + extensions_len {
-            return Err(io::Error::new(
-                io::ErrorKind::UnexpectedEof,
-                "Input too short for extensions data",
+            return Err(DecodeError::BadLength(
+                "Input too short for extensions data".to_string(),
             ));
         }
         let mut encoded_extensions = &input[offset..offset + extensions_len];
@@ -472,7 +458,7 @@ impl CertificateEntry {
 
         let mut extensions = Vec::new();
         while !encoded_extensions.is_empty() {
-            let (extension, remaining) = Extension::decode(encoded_extensions).unwrap();
+            let (extension, remaining) = Extension::decode(encoded_extensions)?;
             extensions.push(extension);
             encoded_extensions = remaining;
         }
@@ -509,7 +495,7 @@ impl Certificate {
             let mut certificate_list_bytes = Vec::new();
             let mut cursor = Cursor::new(&mut certificate_list_bytes);
             for cert in self.certificate_list.iter() {
-                let encoded_cert_entry = cert.encode();
+                let encoded_cert_entry = cert.encode()?;
 
                 // Write the `CertificateEntry` bytes
                 cursor.write_all(&encoded_cert_entry)?;
@@ -764,7 +750,7 @@ mod tests {
             extension_data: b"foo".to_vec(),
         }];
         let entry = CertificateEntry::from_cert_der(cert_der.clone(), extensions);
-        let encoded = entry.encode();
+        let encoded = entry.encode().unwrap();
         let (decoded_entry, remaining) = CertificateEntry::decode(&encoded).unwrap();
 
         if let CertificateType::X509(decoded_cert) = decoded_entry.certificate_type {
