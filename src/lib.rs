@@ -2,14 +2,9 @@ pub mod authenticator;
 pub mod certificate_request;
 mod tls_handshake_messages;
 
-pub use tls_handshake_messages::Extension;
-// use asn1_rs::{FromDer, Sequence};
-// use asn1_rs::{Oid, ToDer};
-// use rcgen::CustomExtension;
 use thiserror::Error;
-// use x509_parser::der_parser::oid;
+pub use tls_handshake_messages::Extension;
 use x509_parser::error::X509Error;
-// use x509_parser::prelude::X509Certificate;
 
 /// Label used in client authenticator handshake context
 pub static EXPORTER_CLIENT_AUTHENTICATOR_HANDSHAKE_CONTEXT: &[u8] =

@@ -5,7 +5,7 @@ use helpers::{
 };
 
 use attestation_exported_authenticators::{
-    authenticator::Authenticator, certificate_request::CertificateRequest, Extension,
+    authenticator::Authenticator, certificate_request::CertificateRequest,
     EXPORTER_SERVER_AUTHENTICATOR_FINISHED_KEY, EXPORTER_SERVER_AUTHENTICATOR_HANDSHAKE_CONTEXT,
 };
 use rand_core::{OsRng, RngCore};
@@ -40,9 +40,6 @@ async fn handle_connection_server(
 
     // TODO#1 here we should wrap the quote in a RATS Conceptual Messages Wrapper (CMW)
 
-    // let rcgen_keypair: rcgen::KeyPair = (&keypair).try_into().unwrap();
-    // let cert_der = create_cert_der(&rcgen_keypair, Some(&quote));
-
     let mut handshake_context_exporter = [0u8; 64];
     conn.export_keying_material(
         &mut handshake_context_exporter,
@@ -59,11 +56,10 @@ async fn handle_connection_server(
     )
     .unwrap();
 
-    let extensions = vec![Extension::new_attestation_cmw(quote)];
-    let authenticator = Authenticator::new(
+    let authenticator = Authenticator::new_with_cmw_attestation(
         certificate_chain,
         private_key,
-        extensions,
+        quote,
         &cert_request,
         handshake_context_exporter,
         finished_key_exporter,

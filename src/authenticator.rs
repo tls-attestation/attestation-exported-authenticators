@@ -66,6 +66,24 @@ impl Authenticator {
         })
     }
 
+    pub fn new_with_cmw_attestation(
+        certificate_chain: Vec<CertificateDer>,
+        private_key: PrivateKeyDer,
+        cmw_attestation: Vec<u8>,
+        certificate_request: &CertificateRequest,
+        handshake_context_exporter: [u8; 64],
+        finished_key_exporter: [u8; 32],
+    ) -> Result<Self, EncodeError> {
+        Self::new(
+            certificate_chain,
+            private_key,
+            vec![Extension::new_attestation_cmw(cmw_attestation)],
+            certificate_request,
+            handshake_context_exporter,
+            finished_key_exporter,
+        )
+    }
+
     /// Serialize to bytes
     /// Certificate || CertificateVerify || Finished
     pub fn encode(&self) -> Result<Vec<u8>, EncodeError> {
