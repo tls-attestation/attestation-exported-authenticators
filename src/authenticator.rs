@@ -1,11 +1,12 @@
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
+use thiserror::Error;
 
 use crate::{
     certificate_request::CertificateRequest,
     tls_handshake_messages::{
-        Certificate, CertificateEntry, CertificateVerify, Finished, VerificationError,
+        Certificate, CertificateEntry, CertificateVerify, Extension, Finished, VerificationError,
     },
-    DecodeError, EncodeError,
+    DecodeError, EncodeError, CMW_ATTESTATION_EXTENSION_TYPE,
 };
 
 /// An Authenticator as per RFC9261 Exported Authenticators
@@ -18,16 +19,30 @@ pub struct Authenticator {
 
 impl Authenticator {
     pub fn new(
-        certificate: CertificateDer,
+        certificate_chain: Vec<CertificateDer>,
         private_key: PrivateKeyDer,
+        extensions: Vec<Extension>,
         certificate_request: &CertificateRequest,
         handshake_context_exporter: [u8; 64],
         finished_key_exporter: [u8; 32],
     ) -> Result<Self, EncodeError> {
-        let certificate = certificate.to_vec();
+        // Add the extensions to the leaf certificate
+        let certificate_list = certificate_chain
+            .into_iter()
+            .enumerate()
+            .map(|(index, cert)| {
+                let exts = if index == 0 {
+                    extensions.clone()
+                } else {
+                    Vec::new()
+                };
+                CertificateEntry::from_cert_der(cert.to_vec(), exts)
+            })
+            .collect();
+
         let certificate = Certificate {
             certificate_request_context: certificate_request.certificate_request_context.clone(),
-            certificate_list: vec![CertificateEntry::from_cert_der(certificate.to_vec())],
+            certificate_list,
         };
 
         let certificate_verify = CertificateVerify::new(
@@ -50,6 +65,26 @@ impl Authenticator {
             certificate_verify,
             finished,
         })
+    }
+
+    /// Create a new authenticator with a cmw_attestation extension.
+    /// Takes an encoded CMW message.
+    pub fn new_with_cmw_attestation(
+        certificate_chain: Vec<CertificateDer>,
+        private_key: PrivateKeyDer,
+        cmw_attestation: Vec<u8>,
+        certificate_request: &CertificateRequest,
+        handshake_context_exporter: [u8; 64],
+        finished_key_exporter: [u8; 32],
+    ) -> Result<Self, EncodeError> {
+        Self::new(
+            certificate_chain,
+            private_key,
+            vec![Extension::new_attestation_cmw(cmw_attestation)],
+            certificate_request,
+            handshake_context_exporter,
+            finished_key_exporter,
+        )
     }
 
     /// Serialize to bytes
@@ -105,6 +140,32 @@ impl Authenticator {
             handshake_context_exporter,
         )
     }
+
+    /// Get extensions from the leaf certificate
+    pub fn extensions(&self) -> Result<Vec<Extension>, AuthenticatorError> {
+        match self.certificate.certificate_list.first() {
+            Some(certificate_entry) => Ok(certificate_entry.extensions.clone()),
+            None => Err(AuthenticatorError::NoCertificate),
+        }
+    }
+
+    /// Get a cwm_attestation extension if present
+    pub fn get_attestation_cmw_extension(&self) -> Result<Vec<u8>, AuthenticatorError> {
+        for extension in self.extensions()? {
+            if extension.extension_type == CMW_ATTESTATION_EXTENSION_TYPE {
+                return Ok(extension.extension_data);
+            }
+        }
+        Err(AuthenticatorError::NoExtension)
+    }
+}
+
+#[derive(Error, Debug)]
+pub enum AuthenticatorError {
+    #[error("Authenticator has no certificate")]
+    NoCertificate,
+    #[error("Requested extension not present")]
+    NoExtension,
 }
 
 #[cfg(test)]
@@ -144,8 +205,9 @@ mod tests {
         let finished_key_exporter = [0; 32];
 
         let authenticator = Authenticator::new(
-            cert_der.into(),
+            vec![cert_der.into()],
             private_key_der,
+            Vec::new(), // extensions
             &certificate_request,
             handshake_context_exporter,
             finished_key_exporter,
