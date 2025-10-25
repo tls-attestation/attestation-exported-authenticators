@@ -3,7 +3,7 @@ pub mod certificate_request;
 mod tls_handshake_messages;
 
 use thiserror::Error;
-pub use tls_handshake_messages::Extension;
+pub use tls_handshake_messages::{Extension, VerificationError};
 use x509_parser::error::X509Error;
 
 /// Label used in client authenticator handshake context
