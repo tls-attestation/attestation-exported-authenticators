@@ -8,6 +8,7 @@ use quinn::ClientConfig;
 use rand_core::{OsRng, RngCore};
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use tdx_quote::Quote;
+use thiserror::Error;
 
 pub struct TlsServer {
     pub certificate_chain: Vec<CertificateDer<'static>>,
@@ -31,29 +32,28 @@ pub struct AttestedQuic {
 
 impl AttestedQuic {
     /// Accept and attest an incoming connection
-    pub async fn accept(&self) -> Option<quinn::Connection> {
+    pub async fn accept(&self) -> Result<quinn::Connection, Error> {
         if let Some(tls_server) = &self.tls_server {
-            let incoming_conn = self.endpoint.accept().await.unwrap();
-            let conn = incoming_conn.await.unwrap();
+            let incoming_conn = self.endpoint.accept().await.ok_or(Error::EndpointClosed)?;
+            let conn = incoming_conn.await?;
 
-            Self::handle_connection_server(&conn, tls_server).await;
-            Some(conn)
+            Self::handle_connection_server(&conn, tls_server).await?;
+            Ok(conn)
         } else {
-            None
+            Err(Error::NoServer)
         }
     }
 
-    pub async fn connect(&self, server_addr: SocketAddr, server_name: &str) -> quinn::Connection {
-        let conn = self
-            .endpoint
-            .connect(server_addr, server_name)
-            .unwrap()
-            .await
-            .unwrap();
+    pub async fn connect(
+        &self,
+        server_addr: SocketAddr,
+        server_name: &str,
+    ) -> Result<quinn::Connection, Error> {
+        let conn = self.endpoint.connect(server_addr, server_name)?.await?;
 
-        self.handle_connection_client(&conn).await;
+        self.handle_connection_client(&conn).await?;
 
-        conn
+        Ok(conn)
     }
 
     pub async fn connect_with(
@@ -61,26 +61,27 @@ impl AttestedQuic {
         config: ClientConfig,
         server_addr: SocketAddr,
         server_name: &str,
-    ) -> quinn::Connection {
+    ) -> Result<quinn::Connection, Error> {
         let conn = self
             .endpoint
-            .connect_with(config, server_addr, server_name)
-            .unwrap()
-            .await
-            .unwrap();
+            .connect_with(config, server_addr, server_name)?
+            .await?;
 
-        self.handle_connection_client(&conn).await;
+        self.handle_connection_client(&conn).await?;
 
-        conn
+        Ok(conn)
     }
 
-    async fn handle_connection_server(conn: &quinn::Connection, tls_server: &TlsServer) {
+    async fn handle_connection_server(
+        conn: &quinn::Connection,
+        tls_server: &TlsServer,
+    ) -> Result<(), Error> {
         // Wait for a bidirectional stream to be opened by the client
-        let (mut send_stream, mut recv_stream) = conn.accept_bi().await.unwrap();
+        let (mut send_stream, mut recv_stream) = conn.accept_bi().await?;
 
         // Read and deserialize a CertificateRequest from the client
-        let cert_request_serialized = recv_stream.read_to_end(1024).await.unwrap();
-        let cert_request = CertificateRequest::decode(&cert_request_serialized).unwrap();
+        let cert_request_serialized = recv_stream.read_to_end(1024).await?;
+        let cert_request = CertificateRequest::decode(&cert_request_serialized)?;
 
         // Now we prepare an authenticator with an attestation using exported key material (based
         // on given context) as input
@@ -89,8 +90,7 @@ impl AttestedQuic {
             &mut keying_material,
             b"label", // TODO #8
             &cert_request.certificate_request_context,
-        )
-        .unwrap();
+        )?;
 
         // Generate a TDX quote using the exported keying material as input
         let quote = generate_quote(keying_material);
@@ -102,16 +102,14 @@ impl AttestedQuic {
             &mut handshake_context_exporter,
             EXPORTER_SERVER_AUTHENTICATOR_HANDSHAKE_CONTEXT,
             &cert_request.certificate_request_context,
-        )
-        .unwrap();
+        )?;
 
         let mut finished_key_exporter = [0u8; 32];
         conn.export_keying_material(
             &mut finished_key_exporter,
             EXPORTER_SERVER_AUTHENTICATOR_FINISHED_KEY,
             &cert_request.certificate_request_context,
-        )
-        .unwrap();
+        )?;
 
         let authenticator = Authenticator::new_with_cmw_attestation(
             tls_server.certificate_chain.clone(),
@@ -120,19 +118,16 @@ impl AttestedQuic {
             &cert_request,
             handshake_context_exporter,
             finished_key_exporter,
-        )
-        .unwrap();
+        )?;
 
-        send_stream
-            .write_all(&authenticator.encode().unwrap())
-            .await
-            .unwrap();
-        send_stream.finish().unwrap(); // Close the send side of the stream
+        send_stream.write_all(&authenticator.encode()?).await?;
+        send_stream.finish()?; // Close the send side of the stream
+        Ok(())
     }
 
     /// Given an outgoing connection, make a [CertificateRequest] and read and verify an attestation [Authenticator]
-    async fn handle_connection_client(&self, conn: &quinn::Connection) {
-        let (mut send_stream, mut recv_stream) = conn.open_bi().await.unwrap();
+    async fn handle_connection_client(&self, conn: &quinn::Connection) -> Result<(), Error> {
+        let (mut send_stream, mut recv_stream) = conn.open_bi().await?;
 
         let mut context = [0u8; 32];
         OsRng.fill_bytes(&mut context);
@@ -141,8 +136,8 @@ impl AttestedQuic {
             certificate_request_context: context.to_vec(),
             extensions: b"cmw_attestation".to_vec(), // TODO #14
         };
-        send_stream.write_all(&cert_request.encode()).await.unwrap();
-        send_stream.finish().unwrap();
+        send_stream.write_all(&cert_request.encode()).await?;
+        send_stream.finish()?;
 
         // Prepare keying material which we will use for checking the quote input data
         let mut keying_material = [0u8; 64];
@@ -150,43 +145,80 @@ impl AttestedQuic {
             &mut keying_material,
             b"label", // TODO #8
             &cert_request.certificate_request_context,
-        )
-        .unwrap();
+        )?;
 
         // Wait for a response from the server.
-        let response = recv_stream.read_to_end(65535).await.unwrap();
+        let response = recv_stream.read_to_end(65535).await?;
 
-        let authenticator = Authenticator::decode(&response).unwrap();
+        let authenticator = Authenticator::decode(&response)?;
 
         let mut handshake_context_exporter = [0u8; 64];
         conn.export_keying_material(
             &mut handshake_context_exporter,
             EXPORTER_SERVER_AUTHENTICATOR_HANDSHAKE_CONTEXT,
             &cert_request.certificate_request_context,
-        )
-        .unwrap();
+        )?;
 
         let mut finished_key_exporter = [0u8; 32];
         conn.export_keying_material(
             &mut finished_key_exporter,
             EXPORTER_SERVER_AUTHENTICATOR_FINISHED_KEY,
             &cert_request.certificate_request_context,
-        )
-        .unwrap();
+        )?;
 
-        assert!(authenticator
-            .verify(
-                &cert_request,
-                &handshake_context_exporter,
-                &finished_key_exporter
-            )
-            .is_ok());
+        authenticator.verify(
+            &cert_request,
+            &handshake_context_exporter,
+            &finished_key_exporter,
+        )?;
 
-        let quote_bytes = authenticator.get_attestation_cmw_extension().unwrap();
+        let quote_bytes = authenticator.get_attestation_cmw_extension()?;
 
-        let quote = Quote::from_bytes(&quote_bytes).unwrap();
+        let quote = Quote::from_bytes(&quote_bytes)?;
 
-        assert_eq!(quote.report_input_data(), keying_material);
+        if quote.report_input_data() != keying_material {
+            return Err(Error::KeyMaterialMismatch);
+        }
+
+        Ok(())
+    }
+}
+
+#[derive(Error, Debug)]
+pub enum Error {
+    #[error("Cannot accept connection as no TLS Server configuration is present")]
+    NoServer,
+    #[error("Cannot accept connection as QUIC endpoint is closed")]
+    EndpointClosed,
+    #[error("Connection: {0}")]
+    QuinnConnection(#[from] quinn::ConnectionError),
+    #[error("Connect: {0}")]
+    QuinnConnect(#[from] quinn::ConnectError),
+    #[error("Read to end: {0}")]
+    ReadToEnd(#[from] quinn::ReadToEndError),
+    #[error("Encode: {0}")]
+    Encode(#[from] attestation_exported_authenticators::EncodeError),
+    #[error("Decode: {0}")]
+    Decode(#[from] attestation_exported_authenticators::DecodeError),
+    #[error("Export keying material: {0}")]
+    ExportKeyingMaterial(String),
+    #[error("Closed stream: {0}")]
+    ClosedStream(#[from] quinn::ClosedStream),
+    #[error("Quinn write: {0}")]
+    QuinnWrite(#[from] quinn::WriteError),
+    #[error("Authenticator: {0}")]
+    Authenticator(#[from] attestation_exported_authenticators::authenticator::AuthenticatorError),
+    #[error("Quote parse: {0}")]
+    QuoteParse(#[from] tdx_quote::QuoteParseError),
+    #[error("Authenticator verification: {0}")]
+    AuthenticatorVerification(#[from] attestation_exported_authenticators::VerificationError),
+    #[error("Exported keying material does not match quote input")]
+    KeyMaterialMismatch,
+}
+
+impl From<quinn::crypto::ExportKeyingMaterialError> for Error {
+    fn from(err: quinn::crypto::ExportKeyingMaterialError) -> Self {
+        Self::ExportKeyingMaterial(format!("{err:?}"))
     }
 }
 

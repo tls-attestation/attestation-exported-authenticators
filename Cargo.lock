@@ -91,6 +91,7 @@ dependencies = [
  "rcgen",
  "rustls",
  "tdx-quote",
+ "thiserror 2.0.16",
  "tokio",
 ]
 
