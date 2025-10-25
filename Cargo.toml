@@ -26,6 +26,7 @@ tdx-quote = "0.0.3"
 rand_core = { version = "0.6.4", features = ["getrandom"] }
 configfs-tsm = "0.0.2"
 hex = "0.4.3"
+attested-quic = { path="./attested-quic", features = ["mock"] }
 
 [features]
 default = ["mock"]

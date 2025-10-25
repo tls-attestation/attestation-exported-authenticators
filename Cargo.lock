@@ -61,6 +61,7 @@ name = "attestation-exported-authenticators"
 version = "0.1.0"
 dependencies = [
  "asn1-rs",
+ "attested-quic",
  "configfs-tsm",
  "getrandom 0.2.16",
  "hex",

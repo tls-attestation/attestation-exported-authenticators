@@ -2,30 +2,45 @@ use std::net::SocketAddr;
 
 use attestation_exported_authenticators::{
     authenticator::Authenticator, certificate_request::CertificateRequest,
-    create_cmw_attestation_extension, extract_attestation,
     EXPORTER_SERVER_AUTHENTICATOR_FINISHED_KEY, EXPORTER_SERVER_AUTHENTICATOR_HANDSHAKE_CONTEXT,
 };
 use quinn::ClientConfig;
 use rand_core::{OsRng, RngCore};
-use rcgen::CertificateParams;
-use rustls::pki_types::PrivateKeyDer;
+use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use tdx_quote::Quote;
 
+pub struct TlsServer {
+    pub certificate_chain: Vec<CertificateDer<'static>>,
+    pub private_key: PrivateKeyDer<'static>,
+}
+
+impl Clone for TlsServer {
+    fn clone(&self) -> Self {
+        Self {
+            certificate_chain: self.certificate_chain.clone(),
+            private_key: self.private_key.clone_key(),
+        }
+    }
+}
+
+#[derive(Clone)]
 pub struct AttestedQuic {
     pub endpoint: quinn::Endpoint,
-    // TODO this should be a certificate
-    keypair: PrivateKeyDer<'static>,
+    pub tls_server: Option<TlsServer>,
 }
 
 impl AttestedQuic {
     /// Accept and attest an incoming connection
-    pub async fn accept(&self) -> quinn::Connection {
-        let incoming_conn = self.endpoint.accept().await.unwrap();
-        let conn = incoming_conn.await.unwrap();
+    pub async fn accept(&self) -> Option<quinn::Connection> {
+        if let Some(tls_server) = &self.tls_server {
+            let incoming_conn = self.endpoint.accept().await.unwrap();
+            let conn = incoming_conn.await.unwrap();
 
-        self.handle_connection_server(&conn).await;
-
-        conn
+            Self::handle_connection_server(&conn, tls_server).await;
+            Some(conn)
+        } else {
+            None
+        }
     }
 
     pub async fn connect(&self, server_addr: SocketAddr, server_name: &str) -> quinn::Connection {
@@ -59,8 +74,7 @@ impl AttestedQuic {
         conn
     }
 
-    /// Given an incoming connection, accept a [CertificateRequest] and respond with an attestation [Authenticator]
-    async fn handle_connection_server(&self, conn: &quinn::Connection) {
+    async fn handle_connection_server(conn: &quinn::Connection, tls_server: &TlsServer) {
         // Wait for a bidirectional stream to be opened by the client
         let (mut send_stream, mut recv_stream) = conn.accept_bi().await.unwrap();
 
@@ -83,9 +97,6 @@ impl AttestedQuic {
 
         // TODO#1 here we should wrap the quote in a RATS Conceptual Messages Wrapper (CMW)
 
-        let rcgen_keypair: rcgen::KeyPair = (&self.keypair).try_into().unwrap();
-        let cert_der = create_cert_der(&rcgen_keypair, Some(&quote));
-
         let mut handshake_context_exporter = [0u8; 64];
         conn.export_keying_material(
             &mut handshake_context_exporter,
@@ -102,9 +113,10 @@ impl AttestedQuic {
         )
         .unwrap();
 
-        let authenticator = Authenticator::new(
-            cert_der.into(),
-            self.keypair.clone_key(),
+        let authenticator = Authenticator::new_with_cmw_attestation(
+            tls_server.certificate_chain.clone(),
+            tls_server.private_key.clone_key(),
+            quote,
             &cert_request,
             handshake_context_exporter,
             finished_key_exporter,
@@ -170,7 +182,7 @@ impl AttestedQuic {
             )
             .is_ok());
 
-        let quote_bytes = extract_attestation(&authenticator.cert_der().unwrap()).unwrap();
+        let quote_bytes = authenticator.get_attestation_cmw_extension().unwrap();
 
         let quote = Quote::from_bytes(&quote_bytes).unwrap();
 
@@ -195,18 +207,4 @@ fn generate_quote(input: [u8; 64]) -> Vec<u8> {
 #[cfg(not(feature = "mock"))]
 fn generate_quote(input: [u8; 64]) -> Vec<u8> {
     configfs_tsm::create_quote(input).unwrap()
-}
-
-// TODO this should take a certificate, not a keypair
-pub fn create_cert_der(keypair: &rcgen::KeyPair, attestation_cmw: Option<&[u8]>) -> Vec<u8> {
-    let mut params = CertificateParams::new(["localhost".to_string()]).unwrap();
-
-    if let Some(attestation) = attestation_cmw {
-        params
-            .custom_extensions
-            .push(create_cmw_attestation_extension(attestation).unwrap());
-    }
-
-    let cert = params.self_signed(keypair).unwrap();
-    cert.der().to_vec()
 }
