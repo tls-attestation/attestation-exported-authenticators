@@ -1,6 +1,6 @@
 ## `attestation-exported-authenticators`
 
-This is a WIP experimental implementation of [Remote Attestation with Exported Authenticators](https://datatracker.ietf.org/doc/html/draft-fossati-tls-exported-attestation-02).
+This is a WIP implementation of the draft IETF standard [Remote Attestation with Exported Authenticators](https://datatracker.ietf.org/doc/html/draft-fossati-seat-expat).
 
 It includes a test which demonstrates using it with QUIC (for transport) and Intel TDX (as confidential compute platform): [tests/quic_tdx.rs](tests/quic_tdx.rs).
 
