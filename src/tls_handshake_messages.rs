@@ -131,14 +131,17 @@ impl CertificateVerify {
         cerificate_request: &CertificateRequest,
         handshake_context_exporter: &[u8; 64],
     ) -> Result<Self, EncodeError> {
-        let signing_key = rustls::crypto::ring::sign::any_supported_type(&private_key).unwrap();
-        let provider = CryptoProvider::get_default().unwrap();
+        let signing_key = rustls::crypto::ring::sign::any_supported_type(&private_key)?;
+        let provider = CryptoProvider::get_default().ok_or(EncodeError::NoProvider)?;
 
         let supported_schemes = provider
             .signature_verification_algorithms
             .supported_schemes();
 
-        let signer = signing_key.choose_scheme(&supported_schemes).unwrap();
+        let signer = signing_key
+            .choose_scheme(&supported_schemes)
+            .ok_or(EncodeError::NoSignatureScheme)?;
+
         let message = Self::create_certificate_verify_message(
             certificate,
             cerificate_request,
@@ -146,7 +149,7 @@ impl CertificateVerify {
         )?;
 
         Ok(Self {
-            signature: signer.sign(&message).unwrap(),
+            signature: signer.sign(&message)?,
             signing_scheme: signer.scheme(),
         })
     }
@@ -223,7 +226,7 @@ impl CertificateVerify {
             let spki: rustls::pki_types::SubjectPublicKeyInfoDer =
                 cert.tbs_certificate.subject_pki.raw.into();
 
-            let public_key: RawPublicKeyEntity = (&spki).try_into().unwrap();
+            let public_key: RawPublicKeyEntity = (&spki).try_into()?;
 
             let message = CertificateVerify::create_certificate_verify_message(
                 certificate,
@@ -239,14 +242,13 @@ impl CertificateVerify {
             let scheme = schemes
                 .iter()
                 .find(|(s, _)| *s == self.signing_scheme)
-                .unwrap()
+                .ok_or(VerificationError::NoSignatureScheme)?
                 .1
                 .first()
-                .unwrap();
+                .ok_or(VerificationError::NoSignatureScheme)?;
 
-            public_key
-                .verify_signature(*scheme, &message, &self.signature)
-                .unwrap();
+            public_key.verify_signature(*scheme, &message, &self.signature)?;
+
             Ok(())
         } else {
             Err(VerificationError::NoCertificate)
@@ -670,6 +672,16 @@ pub enum VerificationError {
     X509(#[from] X509Error),
     #[error("Failed to convert encoded point")]
     EncodedPoint,
+    #[error("WebPKI: {0}")]
+    WebPki(webpki::Error),
+    #[error("No signature scheme available")]
+    NoSignatureScheme,
+}
+
+impl From<webpki::Error> for VerificationError {
+    fn from(err: webpki::Error) -> Self {
+        VerificationError::WebPki(err)
+    }
 }
 
 /// Helper for creating uint24 for length prefix

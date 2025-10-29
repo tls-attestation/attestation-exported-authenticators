@@ -62,6 +62,18 @@ pub enum EncodeError {
     TooLong,
     #[error("Extension length must be less than 65535 bytes.")]
     ExtensionTooLong,
+    #[error("Rustls: {0}")]
+    Rustls(rustls::Error),
+    #[error("Cannot get crypto provider")]
+    NoProvider,
+    #[error("No signature scheme available")]
+    NoSignatureScheme,
+}
+
+impl From<rustls::Error> for EncodeError {
+    fn from(err: rustls::Error) -> Self {
+        EncodeError::Rustls(err)
+    }
 }
 
 /// An error when decoding a message
