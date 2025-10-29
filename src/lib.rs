@@ -52,8 +52,6 @@ pub enum EncodeError {
     Io(#[from] std::io::Error),
     #[error("Expected at least one certificate")]
     NoCertificate,
-    #[error("Failed to convert secret key: {0}")]
-    PKCS8(#[from] p256::pkcs8::Error),
     #[error("HMAC: {0}")]
     HMAC(#[from] hmac::digest::InvalidLength),
     #[error("Request context length must be less than 255 bytes")]
@@ -75,8 +73,6 @@ pub enum DecodeError {
     BadLength(String),
     #[error("Unexpected signature scheme: {0}")]
     BadSignatureScheme(String),
-    #[error("Failed to decode DER signature: {0}")]
-    P256(#[from] p256::ecdsa::Error),
     #[error("Bad message type")]
     UnknownMessageType,
     #[error("Unexpected message type")]

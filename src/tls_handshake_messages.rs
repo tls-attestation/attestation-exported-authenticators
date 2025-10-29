@@ -5,17 +5,10 @@
 use std::io::{Cursor, Read, Write};
 
 use hmac::{Hmac, Mac};
-use p256::{
-    ecdsa::{
-        signature::{Signer, Verifier},
-        Signature, SigningKey, VerifyingKey,
-    },
-    pkcs8::DecodePrivateKey,
-    EncodedPoint,
-};
-use rustls::pki_types::PrivateKeyDer;
+use rustls::{crypto::CryptoProvider, pki_types::PrivateKeyDer};
 use sha2::{Digest, Sha256};
 use thiserror::Error;
+use webpki::RawPublicKeyEntity;
 use x509_parser::prelude::*;
 
 use crate::{
@@ -127,7 +120,8 @@ impl HandShakeMessage {
 /// https://www.rfc-editor.org/rfc/rfc9261#section-5.2.2
 #[derive(Debug, PartialEq, Clone)]
 pub struct CertificateVerify {
-    signature: Signature,
+    signing_scheme: rustls::SignatureScheme,
+    signature: Vec<u8>,
 }
 
 impl CertificateVerify {
@@ -137,8 +131,14 @@ impl CertificateVerify {
         cerificate_request: &CertificateRequest,
         handshake_context_exporter: &[u8; 64],
     ) -> Result<Self, EncodeError> {
-        // TODO check the encoding is PKCS8
-        let signing_key = SigningKey::from_pkcs8_der(private_key.secret_der())?;
+        let signing_key = rustls::crypto::ring::sign::any_supported_type(&private_key).unwrap();
+        let provider = CryptoProvider::get_default().unwrap();
+
+        let supported_schemes = provider
+            .signature_verification_algorithms
+            .supported_schemes();
+
+        let signer = signing_key.choose_scheme(&supported_schemes).unwrap();
         let message = Self::create_certificate_verify_message(
             certificate,
             cerificate_request,
@@ -146,23 +146,19 @@ impl CertificateVerify {
         )?;
 
         Ok(Self {
-            signature: signing_key.sign(&message),
+            signature: signer.sign(&message).unwrap(),
+            signing_scheme: signer.scheme(),
         })
     }
 
     pub fn encode(&self) -> Result<Vec<u8>, EncodeError> {
         let mut cert_verify_message = Vec::new();
 
-        // SignatureScheme for ecdsa_secp256r1_sha256
-        cert_verify_message.extend_from_slice(&[0x04, 0x03]);
+        cert_verify_message.extend_from_slice(&self.signing_scheme.to_array());
 
-        let der_signature = self.signature.to_der();
-        let signature_bytes = der_signature.as_bytes();
+        cert_verify_message.extend_from_slice(&(self.signature.len() as u16).to_be_bytes());
 
-        // Add length prefix
-        cert_verify_message.extend_from_slice(&(signature_bytes.len() as u16).to_be_bytes());
-
-        cert_verify_message.extend_from_slice(signature_bytes);
+        cert_verify_message.extend_from_slice(&self.signature);
 
         let handshake_message = HandShakeMessage::new_certificate_verify(cert_verify_message);
         handshake_message.encode()
@@ -196,12 +192,13 @@ impl CertificateVerify {
             ));
         }
 
-        let signature_bytes = &input[4..4 + signature_len];
+        let signature = &input[4..4 + signature_len];
         // let remaining = &input[4 + signature_len..];
 
         Ok((
             Self {
-                signature: Signature::from_der(signature_bytes)?,
+                signature: signature.to_vec(),
+                signing_scheme: signature_scheme.into(),
             },
             remaining,
         ))
@@ -223,24 +220,34 @@ impl CertificateVerify {
         if let CertificateType::X509(x509_bytes) = &certificate_entry.certificate_type {
             let (_, cert) = X509Certificate::from_der(x509_bytes)?;
 
-            let pk_info = &cert.tbs_certificate.subject_pki.parsed()?;
-            if let x509_parser::public_key::PublicKey::EC(ec_point) = pk_info {
-                let ec_bytes = ec_point.data();
-                let encoded_point = EncodedPoint::from_bytes(ec_bytes)
-                    .map_err(|_| VerificationError::EncodedPoint)?;
-                let verifying_key = VerifyingKey::from_encoded_point(&encoded_point)?;
+            let spki: rustls::pki_types::SubjectPublicKeyInfoDer =
+                cert.tbs_certificate.subject_pki.raw.into();
 
-                let message = CertificateVerify::create_certificate_verify_message(
-                    certificate,
-                    cerificate_request,
-                    handshake_context_exporter,
-                )?;
+            let public_key: RawPublicKeyEntity = (&spki).try_into().unwrap();
 
-                verifying_key.verify(&message, &self.signature)?;
-                Ok(())
-            } else {
-                Err(VerificationError::NotP256)
-            }
+            let message = CertificateVerify::create_certificate_verify_message(
+                certificate,
+                cerificate_request,
+                handshake_context_exporter,
+            )?;
+
+            let provider = CryptoProvider::get_default()
+                .expect("A crypto provider must be installed or defaults used");
+
+            let schemes = provider.signature_verification_algorithms.mapping;
+
+            let scheme = schemes
+                .iter()
+                .find(|(s, _)| *s == self.signing_scheme)
+                .unwrap()
+                .1
+                .first()
+                .unwrap();
+
+            public_key
+                .verify_signature(*scheme, &message, &self.signature)
+                .unwrap();
+            Ok(())
         } else {
             Err(VerificationError::NoCertificate)
         }
@@ -649,8 +656,6 @@ impl Extension {
 /// An error when verifying a [CertificateVerify]
 #[derive(Error, Debug)]
 pub enum VerificationError {
-    #[error("Signature verification: {0}")]
-    Io(#[from] p256::ecdsa::Error),
     #[error("No X509 certificate")]
     NoCertificate,
     #[error("Encode: {0}")]
