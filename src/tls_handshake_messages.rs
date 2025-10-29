@@ -234,8 +234,7 @@ impl CertificateVerify {
                 handshake_context_exporter,
             )?;
 
-            let provider = CryptoProvider::get_default()
-                .expect("A crypto provider must be installed or defaults used");
+            let provider = CryptoProvider::get_default().ok_or(VerificationError::NoProvider)?;
 
             let schemes = provider.signature_verification_algorithms.mapping;
 
@@ -676,6 +675,8 @@ pub enum VerificationError {
     WebPki(webpki::Error),
     #[error("No signature scheme available")]
     NoSignatureScheme,
+    #[error("Cannot get crypto provider")]
+    NoProvider,
 }
 
 impl From<webpki::Error> for VerificationError {
