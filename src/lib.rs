@@ -52,8 +52,6 @@ pub enum EncodeError {
     Io(#[from] std::io::Error),
     #[error("Expected at least one certificate")]
     NoCertificate,
-    #[error("Failed to convert secret key: {0}")]
-    PKCS8(#[from] p256::pkcs8::Error),
     #[error("HMAC: {0}")]
     HMAC(#[from] hmac::digest::InvalidLength),
     #[error("Request context length must be less than 255 bytes")]
@@ -64,6 +62,18 @@ pub enum EncodeError {
     TooLong,
     #[error("Extension length must be less than 65535 bytes.")]
     ExtensionTooLong,
+    #[error("Rustls: {0}")]
+    Rustls(rustls::Error),
+    #[error("Cannot get crypto provider")]
+    NoProvider,
+    #[error("No signature scheme available")]
+    NoSignatureScheme,
+}
+
+impl From<rustls::Error> for EncodeError {
+    fn from(err: rustls::Error) -> Self {
+        EncodeError::Rustls(err)
+    }
 }
 
 /// An error when decoding a message
@@ -75,8 +85,6 @@ pub enum DecodeError {
     BadLength(String),
     #[error("Unexpected signature scheme: {0}")]
     BadSignatureScheme(String),
-    #[error("Failed to decode DER signature: {0}")]
-    P256(#[from] p256::ecdsa::Error),
     #[error("Bad message type")]
     UnknownMessageType,
     #[error("Unexpected message type")]
