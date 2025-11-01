@@ -3,6 +3,7 @@ pub mod certificate_request;
 mod tls_handshake_messages;
 
 use thiserror::Error;
+pub use tls_handshake_messages::CMWAttestation;
 pub use tls_handshake_messages::Extension;
 use x509_parser::error::X509Error;
 
@@ -21,10 +22,6 @@ pub static EXPORTER_CLIENT_AUTHENTICATOR_FINISHED_KEY: &[u8] =
 /// Label used in server authenticator finished message HMAC key
 pub static EXPORTER_SERVER_AUTHENTICATOR_FINISHED_KEY: &[u8] =
     b"EXPORTER-server authenticator finished key";
-
-/// Extension type for cmw_attestion extension
-// TODO #28 what should this be
-pub static CMW_ATTESTATION_EXTENSION_TYPE: [u8; 2] = [0; 2];
 
 /// An error when handling a cmw_attestion certificate extension
 #[derive(Error, Debug)]
@@ -68,6 +65,8 @@ pub enum EncodeError {
     NoProvider,
     #[error("No signature scheme available")]
     NoSignatureScheme,
+    #[error("CMW error: {0}")]
+    CMWError(#[from] cmw::Error),
 }
 
 impl From<rustls::Error> for EncodeError {
@@ -89,4 +88,8 @@ pub enum DecodeError {
     UnknownMessageType,
     #[error("Unexpected message type")]
     UnexpectedMessageType,
+    #[error("Extension type not recognized")]
+    UnknownExtensionType,
+    #[error("CMW error: {0}")]
+    CMWError(#[from] cmw::Error),
 }

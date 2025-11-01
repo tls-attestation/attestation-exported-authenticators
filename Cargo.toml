@@ -14,6 +14,7 @@ thiserror = "2.0.16"
 getrandom = "0.2.16"
 ring = "0.17.14"
 rustls-webpki = { version = "0.103.8", default-features = false, features = ["ring"] }
+cmw = { git = "https://github.com/veraison/rust-cmw.git" }
 
 [dev-dependencies]
 quinn = "0.11.9"
