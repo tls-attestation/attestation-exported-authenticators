@@ -11,10 +11,7 @@ use thiserror::Error;
 use webpki::RawPublicKeyEntity;
 use x509_parser::prelude::*;
 
-use crate::{
-    certificate_request::CertificateRequest, DecodeError, EncodeError,
-    CMW_ATTESTATION_EXTENSION_TYPE,
-};
+use crate::{DecodeError, EncodeError, certificate_request::CertificateRequest};
 
 /// Represents the different possible handshake message types
 // Dead code allowed because not all variants are constructed
@@ -592,7 +589,7 @@ impl Certificate {
 /// Represents an extension as given in a [CertificateEntry]
 #[derive(Debug, PartialEq, Clone)]
 pub struct Extension {
-    pub extension_type: [u8; 2],
+    pub extension_type: ExtensionType,
     pub extension_data: Vec<u8>,
 }
 
@@ -600,7 +597,7 @@ impl Extension {
     /// Create a `attestation_cmw` extension with the given payload
     pub fn new_attestation_cmw(data: Vec<u8>) -> Self {
         Self {
-            extension_type: CMW_ATTESTATION_EXTENSION_TYPE,
+            extension_type: ExtensionType::CMWAttestation,
             extension_data: data,
         }
     }
@@ -610,7 +607,7 @@ impl Extension {
         let mut extension_bytes = Vec::new();
         let mut cursor = Cursor::new(&mut extension_bytes);
 
-        cursor.write_all(&self.extension_type)?;
+        cursor.write_all(&(self.extension_type.clone() as u16).to_be_bytes())?;
 
         if self.extension_data.len() > 0xFFFF {
             return Err(EncodeError::ExtensionTooLong);
@@ -628,8 +625,10 @@ impl Extension {
     pub fn decode(input: &[u8]) -> Result<(Self, &[u8]), DecodeError> {
         let mut cursor = Cursor::new(input);
 
-        let mut extension_type = [0; 2];
-        cursor.read_exact(&mut extension_type)?;
+        let mut extension_type_val = [0; 2];
+        cursor.read_exact(&mut extension_type_val)?;
+
+        let extension_type = ExtensionType::try_from(u16::from_be_bytes(extension_type_val))?;
 
         let mut length_bytes = [0; 2];
         cursor.read_exact(&mut length_bytes)?;
@@ -651,6 +650,67 @@ impl Extension {
             },
             remaining,
         ))
+    }
+}
+
+#[repr(u16)]
+#[derive(Debug, PartialEq, Clone)]
+pub enum ExtensionType {
+    ServerName = 0x0000,
+    MaxFragmentLength = 0x0001,
+    StatusRequest = 0x0005,
+    SupportedGroups = 0x000a,
+    SignatureAlgorithms = 0x000d,
+    UseSrtp = 0x000e,
+    Heartbeat = 0x000f,
+    ApplicationLayerProtocolNegotiation = 0x0010,
+    SignedCertificateTimestamp = 0x0012,
+    ClientCertificateType = 0x0013,
+    ServerCertificateType = 0x0014,
+    Padding = 0x0015,
+    PreSharedKey = 0x0029,
+    EarlyData = 0x002a,
+    SupportedVersions = 0x002b,
+    Cookie = 0x002c,
+    PskKeyExchangeModes = 0x002d,
+    CertificateAuthorities = 0x002f,
+    OidFilters = 0x0030,
+    PostHandshakeAuth = 0x0031,
+    SignatureAlgorithmsCert = 0x0032,
+    KeyShare = 0x0033,
+    CMWAttestation = 0xffff,
+}
+
+impl TryFrom<u16> for ExtensionType {
+    type Error = DecodeError;
+
+    fn try_from(value: u16) -> Result<Self, Self::Error> {
+        match value {
+            0x0000 => Ok(ExtensionType::ServerName),
+            0x0001 => Ok(ExtensionType::MaxFragmentLength),
+            0x0005 => Ok(ExtensionType::StatusRequest),
+            0x000a => Ok(ExtensionType::SupportedGroups),
+            0x000d => Ok(ExtensionType::SignatureAlgorithms),
+            0x000e => Ok(ExtensionType::UseSrtp),
+            0x000f => Ok(ExtensionType::Heartbeat),
+            0x0010 => Ok(ExtensionType::ApplicationLayerProtocolNegotiation),
+            0x0012 => Ok(ExtensionType::SignedCertificateTimestamp),
+            0x0013 => Ok(ExtensionType::ClientCertificateType),
+            0x0014 => Ok(ExtensionType::ServerCertificateType),
+            0x0015 => Ok(ExtensionType::Padding),
+            0x0029 => Ok(ExtensionType::PreSharedKey),
+            0x002a => Ok(ExtensionType::EarlyData),
+            0x002b => Ok(ExtensionType::SupportedVersions),
+            0x002c => Ok(ExtensionType::Cookie),
+            0x002d => Ok(ExtensionType::PskKeyExchangeModes),
+            0x002f => Ok(ExtensionType::CertificateAuthorities),
+            0x0030 => Ok(ExtensionType::OidFilters),
+            0x0031 => Ok(ExtensionType::PostHandshakeAuth),
+            0x0032 => Ok(ExtensionType::SignatureAlgorithmsCert),
+            0x0033 => Ok(ExtensionType::KeyShare),
+            0xffff => Ok(ExtensionType::CMWAttestation),
+            _ => Err(DecodeError::UnknownExtensionType),
+        }
     }
 }
 
@@ -784,7 +844,7 @@ mod tests {
         let keypair = rcgen::KeyPair::generate().unwrap();
         let cert_der = create_cert_der(&keypair);
         let extensions = vec![Extension {
-            extension_type: [0; 2],
+            extension_type: ExtensionType::CMWAttestation,
             extension_data: b"foo".to_vec(),
         }];
         let entry = CertificateEntry::from_cert_der(cert_der.clone(), extensions);

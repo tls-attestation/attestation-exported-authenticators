@@ -2,11 +2,12 @@ use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use thiserror::Error;
 
 use crate::{
+    DecodeError, EncodeError,
     certificate_request::CertificateRequest,
     tls_handshake_messages::{
-        Certificate, CertificateEntry, CertificateVerify, Extension, Finished, VerificationError,
+        Certificate, CertificateEntry, CertificateVerify, Extension, ExtensionType, Finished,
+        VerificationError,
     },
-    DecodeError, EncodeError, CMW_ATTESTATION_EXTENSION_TYPE,
 };
 
 /// An Authenticator as per RFC9261 Exported Authenticators
@@ -152,7 +153,7 @@ impl Authenticator {
     /// Get a cwm_attestation extension if present
     pub fn get_attestation_cmw_extension(&self) -> Result<Vec<u8>, AuthenticatorError> {
         for extension in self.extensions()? {
-            if extension.extension_type == CMW_ATTESTATION_EXTENSION_TYPE {
+            if extension.extension_type == ExtensionType::CMWAttestation {
                 return Ok(extension.extension_data);
             }
         }
