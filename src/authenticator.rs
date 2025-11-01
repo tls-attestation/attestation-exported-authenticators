@@ -5,8 +5,8 @@ use crate::{
     DecodeError, EncodeError,
     certificate_request::CertificateRequest,
     tls_handshake_messages::{
-        Certificate, CertificateEntry, CertificateVerify, Extension, ExtensionType, Finished,
-        VerificationError,
+        CMWAttestation, Certificate, CertificateEntry, CertificateVerify, Extension, ExtensionType,
+        Finished, VerificationError,
     },
 };
 
@@ -73,7 +73,7 @@ impl Authenticator {
     pub fn new_with_cmw_attestation(
         certificate_chain: Vec<CertificateDer>,
         private_key: PrivateKeyDer,
-        cmw_attestation: Vec<u8>,
+        cmw_attestation: CMWAttestation,
         certificate_request: &CertificateRequest,
         handshake_context_exporter: [u8; 64],
         finished_key_exporter: [u8; 32],
@@ -81,7 +81,9 @@ impl Authenticator {
         Self::new(
             certificate_chain,
             private_key,
-            vec![Extension::new_attestation_cmw(cmw_attestation)],
+            vec![Extension::new_attestation_cmw(
+                cmw_attestation.encode_cbor()?,
+            )],
             certificate_request,
             handshake_context_exporter,
             finished_key_exporter,
@@ -151,10 +153,10 @@ impl Authenticator {
     }
 
     /// Get a cwm_attestation extension if present
-    pub fn get_attestation_cmw_extension(&self) -> Result<Vec<u8>, AuthenticatorError> {
+    pub fn get_attestation_cmw_extension(&self) -> Result<CMWAttestation, AuthenticatorError> {
         for extension in self.extensions()? {
             if extension.extension_type == ExtensionType::CMWAttestation {
-                return Ok(extension.extension_data);
+                return Ok(CMWAttestation::decode_cbor(&extension.extension_data)?);
             }
         }
         Err(AuthenticatorError::NoExtension)
@@ -167,6 +169,8 @@ pub enum AuthenticatorError {
     NoCertificate,
     #[error("Requested extension not present")]
     NoExtension,
+    #[error("Decode error: {0}")]
+    Decode(#[from] DecodeError),
 }
 
 #[cfg(test)]

@@ -4,6 +4,7 @@
 
 use std::io::{Cursor, Read, Write};
 
+use cmw::CMW;
 use hmac::{Hmac, Mac};
 use rustls::{crypto::CryptoProvider, pki_types::PrivateKeyDer};
 use sha2::{Digest, Sha256};
@@ -711,6 +712,59 @@ impl TryFrom<u16> for ExtensionType {
             0xffff => Ok(ExtensionType::CMWAttestation),
             _ => Err(DecodeError::UnknownExtensionType),
         }
+    }
+}
+
+/// CMW Attestation extension contents
+///
+/// Corresponds to the CMWAttestation structure defined in
+/// section 3 of draft-fossati-seat-expat.
+#[derive(Debug, PartialEq, Clone)]
+pub struct CMWAttestation(CMW);
+
+impl CMWAttestation {
+    /// Create a new extension from a CMW
+    pub fn new(cmw: CMW) -> Self {
+        Self(cmw)
+    }
+
+    /// Get the inner CMW
+    pub fn cmw(self) -> CMW {
+        self.0
+    }
+
+    /// Encode the CMW Attestation extension data to CBOR
+    pub fn encode_cbor(&self) -> Result<Vec<u8>, EncodeError> {
+        let marshalled_cmw = self.0.marshal_cbor()?;
+        let len: u16 = marshalled_cmw
+            .len()
+            .try_into()
+            .map_err(|_| EncodeError::TooLong)?;
+
+        let mut result = Vec::new();
+        result.extend_from_slice(&len.to_be_bytes());
+        result.extend_from_slice(&marshalled_cmw);
+        Ok(result)
+    }
+
+    /// Decode the CMW Attestation extension data
+    pub fn decode_cbor(input: &[u8]) -> Result<Self, DecodeError> {
+        // Read the two byte big endian length prefix
+        // then call CMW::unmarshal_cbor on the remaining bytes
+        if input.len() < 2 {
+            return Err(DecodeError::BadLength(
+                "Input too short for CMW length prefix".to_string(),
+            ));
+        }
+        let len = u16::from_be_bytes([input[0], input[1]]) as usize;
+        if input.len() < 2 + len {
+            return Err(DecodeError::BadLength(
+                "Input too short for CMW data".to_string(),
+            ));
+        }
+        let cbor_data = &input[2..2 + len];
+        let cmw = CMW::unmarshal_cbor(cbor_data)?;
+        Ok(Self(cmw))
     }
 }
 

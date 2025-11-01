@@ -3,6 +3,7 @@ pub mod certificate_request;
 mod tls_handshake_messages;
 
 use thiserror::Error;
+pub use tls_handshake_messages::CMWAttestation;
 pub use tls_handshake_messages::Extension;
 use x509_parser::error::X509Error;
 
@@ -64,6 +65,8 @@ pub enum EncodeError {
     NoProvider,
     #[error("No signature scheme available")]
     NoSignatureScheme,
+    #[error("CMW error: {0}")]
+    CMWError(#[from] cmw::Error),
 }
 
 impl From<rustls::Error> for EncodeError {
@@ -87,4 +90,6 @@ pub enum DecodeError {
     UnexpectedMessageType,
     #[error("Extension type not recognized")]
     UnknownExtensionType,
+    #[error("CMW error: {0}")]
+    CMWError(#[from] cmw::Error),
 }
