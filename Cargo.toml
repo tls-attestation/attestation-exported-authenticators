@@ -29,8 +29,12 @@ configfs-tsm = "0.0.2"
 hex = "0.4.3"
 
 [features]
-default = ["mock", "quic", "tdx"]
+default = ["mock"]
 mock = ["tdx-quote/mock"]
 wasm = ["getrandom/js", "ring/wasm32_unknown_unknown_js"]
-quic = ["quinn"]
+quic = ["quinn", "tdx"]
 tdx = ["tdx-quote", "configfs-tsm", "rand_core"]
+
+[[test]]
+name = "quic_tdx"
+required-features = ["quic"]
