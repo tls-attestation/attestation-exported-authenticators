@@ -25,21 +25,6 @@ async fn handle_connection_server(
     let cert_request_serialized = recv_stream.read_to_end(1024).await.unwrap();
     let cert_request = CertificateRequest::decode(&cert_request_serialized).unwrap();
 
-    // Now we prepare an authenticator with an attestation using exported key material (based
-    // on given context) as input
-    let mut keying_material = [0u8; 64];
-    conn.export_keying_material(
-        &mut keying_material,
-        b"label", // TODO #8
-        &cert_request.certificate_request_context,
-    )
-    .unwrap();
-
-    // Generate a TDX quote using the exported keying material as input
-    let quote = generate_quote(keying_material);
-
-    // TODO#1 here we should wrap the quote in a RATS Conceptual Messages Wrapper (CMW)
-
     let mut handshake_context_exporter = [0u8; 64];
     conn.export_keying_material(
         &mut handshake_context_exporter,
@@ -55,6 +40,11 @@ async fn handle_connection_server(
         &cert_request.certificate_request_context,
     )
     .unwrap();
+
+    // Generate a TDX quote using the exported keying material as input
+    let quote = generate_quote(handshake_context_exporter);
+
+    // TODO#1 here we should wrap the quote in a RATS Conceptual Messages Wrapper (CMW)
 
     let authenticator = Authenticator::new_with_cmw_attestation(
         certificate_chain,
@@ -86,15 +76,6 @@ async fn handle_connection_client(conn: &quinn::Connection) {
     };
     send_stream.write_all(&cert_request.encode()).await.unwrap();
     send_stream.finish().unwrap();
-
-    // Prepare keying material which we will use for checking the quote input data
-    let mut keying_material = [0u8; 64];
-    conn.export_keying_material(
-        &mut keying_material,
-        b"label", // TODO #8
-        &cert_request.certificate_request_context,
-    )
-    .unwrap();
 
     // Wait for a response from the server.
     let response = recv_stream.read_to_end(65535).await.unwrap();
@@ -129,7 +110,7 @@ async fn handle_connection_client(conn: &quinn::Connection) {
 
     let quote = Quote::from_bytes(&quote_bytes).unwrap();
 
-    assert_eq!(quote.report_input_data(), keying_material);
+    assert_eq!(quote.report_input_data(), handshake_context_exporter);
 }
 
 #[tokio::test]
