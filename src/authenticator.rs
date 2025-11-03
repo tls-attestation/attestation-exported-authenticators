@@ -194,6 +194,9 @@ mod tests {
 
     #[test]
     fn encode_decode_authenticator() {
+        let ring_provider = rustls::crypto::ring::default_provider();
+        rustls::crypto::CryptoProvider::install_default(ring_provider).unwrap();
+
         let keypair = rcgen::KeyPair::generate().unwrap();
         let cert_der = create_cert_der(&keypair);
         let private_key_der =
