@@ -4,7 +4,7 @@ use helpers::{
     create_quinn_client, create_quinn_server, create_quinn_servers, generate_certificate_chain,
 };
 
-use attested_quic::{AttestedQuic, TlsServer};
+use attestation_exported_authenticators::quic::{AttestedQuic, TlsServer};
 
 #[tokio::test]
 async fn demonstrate_with_quic_and_tdx() {

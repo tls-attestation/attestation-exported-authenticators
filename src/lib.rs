@@ -1,5 +1,7 @@
 pub mod authenticator;
 pub mod certificate_request;
+#[cfg(any(feature = "mock", test))]
+pub mod quic;
 mod tls_handshake_messages;
 
 use thiserror::Error;

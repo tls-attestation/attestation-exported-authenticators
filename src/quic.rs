@@ -1,6 +1,6 @@
 use std::net::SocketAddr;
 
-use attestation_exported_authenticators::{
+use crate::{
     authenticator::Authenticator, certificate_request::CertificateRequest,
     EXPORTER_SERVER_AUTHENTICATOR_FINISHED_KEY, EXPORTER_SERVER_AUTHENTICATOR_HANDSHAKE_CONTEXT,
 };
@@ -197,9 +197,9 @@ pub enum Error {
     #[error("Read to end: {0}")]
     ReadToEnd(#[from] quinn::ReadToEndError),
     #[error("Encode: {0}")]
-    Encode(#[from] attestation_exported_authenticators::EncodeError),
+    Encode(#[from] crate::EncodeError),
     #[error("Decode: {0}")]
-    Decode(#[from] attestation_exported_authenticators::DecodeError),
+    Decode(#[from] crate::DecodeError),
     #[error("Export keying material: {0}")]
     ExportKeyingMaterial(String),
     #[error("Closed stream: {0}")]
@@ -207,11 +207,11 @@ pub enum Error {
     #[error("Quinn write: {0}")]
     QuinnWrite(#[from] quinn::WriteError),
     #[error("Authenticator: {0}")]
-    Authenticator(#[from] attestation_exported_authenticators::authenticator::AuthenticatorError),
+    Authenticator(#[from] crate::authenticator::AuthenticatorError),
     #[error("Quote parse: {0}")]
     QuoteParse(#[from] tdx_quote::QuoteParseError),
     #[error("Authenticator verification: {0}")]
-    AuthenticatorVerification(#[from] attestation_exported_authenticators::VerificationError),
+    AuthenticatorVerification(#[from] crate::VerificationError),
     #[error("Exported keying material does not match quote input")]
     KeyMaterialMismatch,
 }

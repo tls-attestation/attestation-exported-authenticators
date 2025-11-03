@@ -61,7 +61,6 @@ name = "attestation-exported-authenticators"
 version = "0.1.0"
 dependencies = [
  "asn1-rs",
- "attested-quic",
  "configfs-tsm",
  "getrandom 0.2.16",
  "hex",
@@ -77,22 +76,6 @@ dependencies = [
  "thiserror 2.0.16",
  "tokio",
  "x509-parser",
-]
-
-[[package]]
-name = "attested-quic"
-version = "0.1.0"
-dependencies = [
- "attestation-exported-authenticators",
- "configfs-tsm",
- "hex",
- "quinn",
- "rand_core 0.6.4",
- "rcgen",
- "rustls",
- "tdx-quote",
- "thiserror 2.0.16",
- "tokio",
 ]
 
 [[package]]
