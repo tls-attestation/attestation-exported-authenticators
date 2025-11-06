@@ -4,7 +4,7 @@
 
 use std::io::{Cursor, Read, Write};
 
-use cmw::CMW;
+use cmw::{CMW, Monad};
 use hmac::{Hmac, Mac};
 use rustls::{crypto::CryptoProvider, pki_types::PrivateKeyDer};
 use sha2::{Digest, Sha256};
@@ -731,6 +731,26 @@ impl CMWAttestation {
     /// Get the inner CMW
     pub fn cmw(self) -> CMW {
         self.0
+    }
+
+    /// Get the inner Monad CMW, or return an error if it is not a Monad
+    pub fn monad_cmw(self) -> Result<Monad, DecodeError> {
+        match self.0 {
+            CMW::Monad(m) => Ok(m),
+            _ => Err(DecodeError::CMWError(cmw::Error::Unexpected(
+                "Not a monad CMW".into(),
+            ))),
+        }
+    }
+
+    /// Get the inner Collection CMW, or return an error if it is not a Collection
+    pub fn collection_cmw(self) -> Result<cmw::Collection, DecodeError> {
+        match self.0 {
+            CMW::Collection(c) => Ok(c),
+            _ => Err(DecodeError::CMWError(cmw::Error::Unexpected(
+                "Not a collection CMW".into(),
+            ))),
+        }
     }
 
     /// Encode the CMW Attestation extension data to CBOR
