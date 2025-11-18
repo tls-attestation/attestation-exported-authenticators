@@ -137,10 +137,9 @@ async fn handle_connection_client(conn: &quinn::Connection) {
     );
 
     let cmw_attestation_extension = authenticator.get_attestation_cmw_extension().unwrap();
-    let cmw = match cmw_attestation_extension.cmw() {
-        CMW::Monad(m) => m,
-        _ => panic!("Expected a Monad CMW"),
-    };
+    let cmw = cmw_attestation_extension
+        .monad_cmw()
+        .expect("Expected a Monad CMW");
 
     let quote_bytes = cmw.value();
 
