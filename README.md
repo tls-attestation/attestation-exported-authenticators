@@ -18,4 +18,4 @@ By default, this test will use mock quotes so that the test will run on non-TDX 
 cargo test --no-default-features
 ```
 
-This work is supported in part by the Cypherpunk fellowship](https://cypherpunk.camp/#fellowship) program.
+This work is supported in part by the [Cypherpunk fellowship](https://cypherpunk.camp/#fellowship) program.
