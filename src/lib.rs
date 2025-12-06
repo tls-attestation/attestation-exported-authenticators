@@ -1,10 +1,12 @@
+pub mod attestation;
 pub mod authenticator;
 pub mod certificate_request;
+#[cfg(any(feature = "quic", test))]
+pub mod quic;
 mod tls_handshake_messages;
 
 use thiserror::Error;
-pub use tls_handshake_messages::CMWAttestation;
-pub use tls_handshake_messages::Extension;
+pub use tls_handshake_messages::{CMWAttestation, Extension, VerificationError};
 use x509_parser::error::X509Error;
 
 /// Label used in client authenticator handshake context
