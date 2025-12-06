@@ -1,9 +1,10 @@
-use std::net::SocketAddr;
+use std::{net::SocketAddr, str::FromStr};
 
 use crate::{
-    authenticator::Authenticator, certificate_request::CertificateRequest,
+    authenticator::Authenticator, certificate_request::CertificateRequest, CMWAttestation,
     EXPORTER_SERVER_AUTHENTICATOR_FINISHED_KEY, EXPORTER_SERVER_AUTHENTICATOR_HANDSHAKE_CONTEXT,
 };
+use cmw::{Mime, Monad, CMW};
 use quinn::ClientConfig;
 use rand_core::{OsRng, RngCore};
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
@@ -107,7 +108,12 @@ impl AttestedQuic {
         // Generate a TDX quote using the exported keying material as input
         let quote = generate_quote(keying_material);
 
-        // TODO#1 here we should wrap the quote in a RATS Conceptual Messages Wrapper (CMW)
+        let tdx_quote_media_type = Mime::from_str(
+            "application/tdx-quote; version=1.0; profile=\"https://trustedcomputinggroup.org/tdx/v1\"",
+        ).expect("Failed to parse TDX quote media type");
+
+        let cmw = Monad::new_media_type(tdx_quote_media_type, quote, None)
+            .expect("Failed to create Monad CMW");
 
         let mut handshake_context_exporter = [0u8; 64];
         conn.export_keying_material(
@@ -126,7 +132,7 @@ impl AttestedQuic {
         let authenticator = Authenticator::new_with_cmw_attestation(
             tls_server.certificate_chain.clone(),
             tls_server.private_key.clone_key(),
-            quote,
+            CMWAttestation::new(CMW::Monad(cmw)),
             &cert_request,
             handshake_context_exporter,
             finished_key_exporter,
@@ -184,9 +190,12 @@ impl AttestedQuic {
             &finished_key_exporter,
         )?;
 
-        let quote_bytes = authenticator.get_attestation_cmw_extension()?;
+        let cmw_attestation_extension = authenticator.get_attestation_cmw_extension()?;
+        let cmw = cmw_attestation_extension
+            .monad_cmw()
+            .expect("Expected a Monad CMW");
 
-        let quote = Quote::from_bytes(&quote_bytes)?;
+        let quote = Quote::from_bytes(&cmw.value())?;
 
         if quote.report_input_data() != keying_material {
             return Err(Error::KeyMaterialMismatch);
