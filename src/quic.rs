@@ -10,8 +10,11 @@ use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use tdx_quote::Quote;
 use thiserror::Error;
 
+/// Details of a TLS server, or TLS client with client authentication
 pub struct TlsServer {
+    /// DER-encoded TLS certificate chain
     pub certificate_chain: Vec<CertificateDer<'static>>,
+    /// Associated private key
     pub private_key: PrivateKeyDer<'static>,
 }
 
@@ -24,6 +27,7 @@ impl Clone for TlsServer {
     }
 }
 
+/// An attested QUIC endpoint (server or client)
 #[derive(Clone)]
 pub struct AttestedQuic {
     pub endpoint: quinn::Endpoint,
@@ -31,7 +35,8 @@ pub struct AttestedQuic {
 }
 
 impl AttestedQuic {
-    /// Accept and attest an incoming connection
+    /// Accept an incoming connection, do an attestation exchange, then return the
+    /// [quinn::Connection] if succesful
     pub async fn accept(&self) -> Result<quinn::Connection, Error> {
         if let Some(tls_server) = &self.tls_server {
             let incoming_conn = self.endpoint.accept().await.ok_or(Error::EndpointClosed)?;
@@ -44,6 +49,8 @@ impl AttestedQuic {
         }
     }
 
+    /// Connect to a remote peer, do an attestation exchange, and return the [quinn::Connection] if
+    /// succesful
     pub async fn connect(
         &self,
         server_addr: SocketAddr,
@@ -56,6 +63,8 @@ impl AttestedQuic {
         Ok(conn)
     }
 
+    /// Connect to a remote peer with given [ClientConfig], do an attestion exchange, and return
+    /// the [quinn::Connection] if succesful
     pub async fn connect_with(
         &self,
         config: ClientConfig,
@@ -72,6 +81,9 @@ impl AttestedQuic {
         Ok(conn)
     }
 
+    /// Do an attestation exchange with an incoming connection
+    ///
+    /// This means accepting a [CertificateRequest] and responding with an [Authenticator]
     async fn handle_connection_server(
         conn: &quinn::Connection,
         tls_server: &TlsServer,
