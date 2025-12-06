@@ -30,12 +30,12 @@ configfs-tsm = "0.0.2"
 hex = "0.4.3"
 
 [features]
-default = ["mock", "quic"]
-mock = ["tdx-quote/mock"]
+default = ["mock", "quic", "dcap-tdx"]
+mock = ["tdx-quote/mock", "rand_core"]
 wasm = ["getrandom/js", "ring/wasm32_unknown_unknown_js"]
-quic = ["quinn", "tdx"]
-tdx = ["tdx-quote", "configfs-tsm", "rand_core"]
+quic = ["quinn"]
+dcap-tdx = ["tdx-quote", "configfs-tsm"]
 
 [[test]]
 name = "quic_tdx"
-required-features = ["quic"]
+required-features = ["quic", "dcap-tdx"]

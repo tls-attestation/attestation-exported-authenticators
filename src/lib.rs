@@ -1,3 +1,4 @@
+pub mod attestation;
 pub mod authenticator;
 pub mod certificate_request;
 #[cfg(any(feature = "quic", test))]

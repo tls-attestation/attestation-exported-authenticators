@@ -1,10 +1,11 @@
-use std::{net::SocketAddr, str::FromStr};
+use std::net::SocketAddr;
 
 use crate::{
-    authenticator::Authenticator, certificate_request::CertificateRequest, CMWAttestation,
-    EXPORTER_SERVER_AUTHENTICATOR_FINISHED_KEY, EXPORTER_SERVER_AUTHENTICATOR_HANDSHAKE_CONTEXT,
+    attestation::dcap_tdx, authenticator::Authenticator, certificate_request::CertificateRequest,
+    CMWAttestation, EXPORTER_SERVER_AUTHENTICATOR_FINISHED_KEY,
+    EXPORTER_SERVER_AUTHENTICATOR_HANDSHAKE_CONTEXT,
 };
-use cmw::{Mime, Monad, CMW};
+use cmw::{Monad, CMW};
 use quinn::ClientConfig;
 use rand_core::{OsRng, RngCore};
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
@@ -106,14 +107,9 @@ impl AttestedQuic {
         )?;
 
         // Generate a TDX quote using the exported keying material as input
-        let quote = generate_quote(keying_material);
+        let quote = dcap_tdx::generate_quote(keying_material);
 
-        let tdx_quote_media_type = Mime::from_str(
-            "application/tdx-quote; version=1.0; profile=\"https://trustedcomputinggroup.org/tdx/v1\"",
-        ).expect("Failed to parse TDX quote media type");
-
-        let cmw = Monad::new_media_type(tdx_quote_media_type, quote, None)
-            .expect("Failed to create Monad CMW");
+        let cmw = Monad::new_media_type(dcap_tdx::tdx_quote_media_type(), quote, None)?;
 
         let mut handshake_context_exporter = [0u8; 64];
         conn.export_keying_material(
@@ -191,9 +187,7 @@ impl AttestedQuic {
         )?;
 
         let cmw_attestation_extension = authenticator.get_attestation_cmw_extension()?;
-        let cmw = cmw_attestation_extension
-            .monad_cmw()
-            .expect("Expected a Monad CMW");
+        let cmw = cmw_attestation_extension.monad_cmw()?;
 
         let quote = Quote::from_bytes(&cmw.value())?;
 
@@ -235,29 +229,12 @@ pub enum Error {
     AuthenticatorVerification(#[from] crate::VerificationError),
     #[error("Exported keying material does not match quote input")]
     KeyMaterialMismatch,
+    #[error("Conceptual Message Wrappers: {0}")]
+    Cmw(#[from] cmw::Error),
 }
 
 impl From<quinn::crypto::ExportKeyingMaterialError> for Error {
     fn from(err: quinn::crypto::ExportKeyingMaterialError) -> Self {
         Self::ExportKeyingMaterial(format!("{err:?}"))
     }
-}
-
-/// Create a mock quote for testing on non-TDX hardware
-#[cfg(feature = "mock")]
-fn generate_quote(input: [u8; 64]) -> Vec<u8> {
-    let attestation_key = tdx_quote::SigningKey::random(&mut OsRng);
-    let provisioning_certification_key = tdx_quote::SigningKey::random(&mut OsRng);
-    Quote::mock(
-        attestation_key.clone(),
-        provisioning_certification_key.clone(),
-        input,
-        b"Mock cert chain".to_vec(),
-    )
-    .as_bytes()
-}
-
-#[cfg(not(feature = "mock"))]
-fn generate_quote(input: [u8; 64]) -> Vec<u8> {
-    configfs_tsm::create_quote(input).unwrap()
 }
