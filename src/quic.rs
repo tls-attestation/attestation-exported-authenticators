@@ -1,7 +1,9 @@
 use std::net::SocketAddr;
 
 use crate::{
-    attestation::dcap_tdx, authenticator::Authenticator, certificate_request::CertificateRequest,
+    attestation::{dcap_tdx, AttestationType},
+    authenticator::Authenticator,
+    certificate_request::CertificateRequest,
     CMWAttestation, EXPORTER_SERVER_AUTHENTICATOR_FINISHED_KEY,
     EXPORTER_SERVER_AUTHENTICATOR_HANDSHAKE_CONTEXT,
 };
@@ -34,6 +36,7 @@ impl Clone for TlsServer {
 pub struct AttestedQuic {
     pub endpoint: quinn::Endpoint,
     pub tls_server: Option<TlsServer>,
+    pub attestion_type: AttestationType,
 }
 
 impl AttestedQuic {
@@ -194,6 +197,9 @@ impl AttestedQuic {
         if quote.report_input_data() != keying_material {
             return Err(Error::KeyMaterialMismatch);
         }
+
+        // #[cfg(not(feature = "mock"))]
+        // quote.verify()?;
 
         Ok(())
     }
