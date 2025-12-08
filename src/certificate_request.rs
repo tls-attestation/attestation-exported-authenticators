@@ -121,10 +121,7 @@ pub struct ClientCertificateRequest {
 impl ClientCertificateRequest {
     /// Serialize to bytes
     pub fn encode(&self) -> Vec<u8> {
-        let certificate_request = CertificateRequest {
-            certificate_request_context: self.certificate_request_context.clone(),
-            extensions: self.extensions.clone(),
-        };
+        let certificate_request: CertificateRequest = self.clone().into();
         certificate_request.encode()
     }
 
