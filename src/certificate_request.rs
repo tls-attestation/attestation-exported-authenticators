@@ -100,6 +100,15 @@ impl CertificateRequest {
     }
 }
 
+impl From<ClientCertificateRequest> for CertificateRequest {
+    fn from(certificate_request: ClientCertificateRequest) -> Self {
+        Self {
+            certificate_request_context: certificate_request.certificate_request_context,
+            extensions: certificate_request.extensions,
+        }
+    }
+}
+
 /// A ClientCertificateRequest message as per RFC9261 Exported Authenticators
 #[derive(Debug, PartialEq, Clone)]
 pub struct ClientCertificateRequest {
@@ -122,10 +131,16 @@ impl ClientCertificateRequest {
     /// Deserialize from bytes
     pub fn decode(data: &[u8]) -> Result<Self, DecodeError> {
         let certificate_request = CertificateRequest::decode(data)?;
-        Ok(Self {
+        Ok(certificate_request.into())
+    }
+}
+
+impl From<CertificateRequest> for ClientCertificateRequest {
+    fn from(certificate_request: CertificateRequest) -> Self {
+        Self {
             certificate_request_context: certificate_request.certificate_request_context,
             extensions: certificate_request.extensions,
-        })
+        }
     }
 }
 
