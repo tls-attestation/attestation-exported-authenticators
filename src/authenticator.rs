@@ -2,12 +2,12 @@ use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use thiserror::Error;
 
 use crate::{
-    DecodeError, EncodeError,
     certificate_request::CertificateRequest,
     tls_handshake_messages::{
         CMWAttestation, Certificate, CertificateEntry, CertificateVerify, Extension, ExtensionType,
         Finished, VerificationError,
     },
+    DecodeError, EncodeError,
 };
 
 /// An Authenticator as per RFC9261 Exported Authenticators
@@ -23,10 +23,12 @@ impl Authenticator {
         certificate_chain: Vec<CertificateDer>,
         private_key: PrivateKeyDer,
         extensions: Vec<Extension>,
-        certificate_request: &CertificateRequest,
+        certificate_request: impl Into<CertificateRequest>,
         handshake_context_exporter: [u8; 64],
         finished_key_exporter: [u8; 32],
     ) -> Result<Self, EncodeError> {
+        let certificate_request: CertificateRequest = certificate_request.into();
+
         // Add the extensions to the leaf certificate
         let certificate_list = certificate_chain
             .into_iter()
@@ -49,14 +51,14 @@ impl Authenticator {
         let certificate_verify = CertificateVerify::new(
             &certificate,
             private_key,
-            certificate_request,
+            &certificate_request,
             &handshake_context_exporter,
         )?;
 
         let finished = Finished::new(
             &certificate,
             &certificate_verify,
-            certificate_request,
+            &certificate_request,
             &handshake_context_exporter,
             &finished_key_exporter,
         )?;
@@ -74,7 +76,7 @@ impl Authenticator {
         certificate_chain: Vec<CertificateDer>,
         private_key: PrivateKeyDer,
         cmw_attestation: CMWAttestation,
-        certificate_request: &CertificateRequest,
+        certificate_request: impl Into<CertificateRequest>,
         handshake_context_exporter: [u8; 64],
         finished_key_exporter: [u8; 32],
     ) -> Result<Self, EncodeError> {
@@ -121,14 +123,16 @@ impl Authenticator {
 
     pub fn verify(
         &self,
-        certificate_request: &CertificateRequest,
+        certificate_request: impl Into<CertificateRequest>,
         handshake_context_exporter: &[u8; 64],
         finished_key_exporter: &[u8; 32],
     ) -> Result<(), VerificationError> {
+        let certificate_request: CertificateRequest = certificate_request.into();
+
         let finished_check = Finished::new(
             &self.certificate,
             &self.certificate_verify,
-            certificate_request,
+            &certificate_request,
             handshake_context_exporter,
             finished_key_exporter,
         )?;
@@ -139,7 +143,7 @@ impl Authenticator {
 
         self.certificate_verify.verify(
             &self.certificate,
-            certificate_request,
+            &certificate_request,
             handshake_context_exporter,
         )
     }
@@ -216,7 +220,7 @@ mod tests {
             vec![cert_der.into()],
             private_key_der,
             Vec::new(), // extensions
-            &certificate_request,
+            certificate_request.clone(),
             handshake_context_exporter,
             finished_key_exporter,
         )
@@ -228,7 +232,7 @@ mod tests {
 
         authenticator
             .verify(
-                &certificate_request,
+                certificate_request,
                 &handshake_context_exporter,
                 &finished_key_exporter,
             )
