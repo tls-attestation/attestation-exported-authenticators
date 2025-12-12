@@ -4,13 +4,17 @@ use helpers::{
     create_quinn_client, create_quinn_server, create_quinn_servers, generate_certificate_chain,
 };
 
-use attestation_exported_authenticators::quic::{AttestedQuic, TlsServer};
+use attestation_exported_authenticators::{
+    attestation::AttestationType,
+    quic::{AttestedQuic, TlsServer},
+};
 
 #[tokio::test]
 async fn demonstrate_with_quic_and_tdx() {
     let (cert_chain, keypair) = generate_certificate_chain();
     let quinn_server = create_quinn_server(cert_chain.clone(), keypair.clone_key(), None, false);
     let server = AttestedQuic {
+        attestion_type: AttestationType::DcapTdx,
         endpoint: quinn_server,
         tls_server: Some(TlsServer {
             certificate_chain: cert_chain.clone(),
@@ -29,6 +33,7 @@ async fn demonstrate_with_quic_and_tdx() {
 
     let client_endpoint = create_quinn_client(&cert_chain);
     let client = AttestedQuic {
+        attestion_type: AttestationType::None,
         endpoint: client_endpoint,
         tls_server: None,
     };
@@ -61,6 +66,7 @@ async fn mutual_attestation_with_quic_and_tdx() {
     );
 
     let alice_server = AttestedQuic {
+        attestion_type: AttestationType::DcapTdx,
         endpoint: alice_quinn_server,
         tls_server: Some(TlsServer {
             certificate_chain: alice_cert,
@@ -69,6 +75,7 @@ async fn mutual_attestation_with_quic_and_tdx() {
     };
 
     let bob_server = AttestedQuic {
+        attestion_type: AttestationType::DcapTdx,
         endpoint: bob_quinn_server,
         tls_server: Some(TlsServer {
             certificate_chain: bob_cert,
