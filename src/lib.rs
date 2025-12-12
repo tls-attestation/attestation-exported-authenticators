@@ -1,9 +1,10 @@
 pub mod attestation;
 pub mod authenticator;
 pub mod certificate_request;
+mod tls_handshake_messages;
+
 #[cfg(any(feature = "quic", test))]
 pub mod quic;
-mod tls_handshake_messages;
 
 use thiserror::Error;
 pub use tls_handshake_messages::{CMWAttestation, Extension, VerificationError};

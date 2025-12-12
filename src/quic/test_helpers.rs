@@ -1,4 +1,4 @@
-//! Helper functions for integration tests
+//! Helper functions for tests
 use quinn::{
     crypto::rustls::{QuicClientConfig, QuicServerConfig},
     ClientConfig, ServerConfig,

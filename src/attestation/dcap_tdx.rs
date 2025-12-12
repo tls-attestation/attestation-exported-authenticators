@@ -1,6 +1,7 @@
 use cmw::Mime;
 use std::str::FromStr;
-use tdx_quote::Quote;
+
+use crate::attestation::AttestationGenerationError;
 
 const TDX_QUOTE_MIME: &str =
     "application/tdx-quote; version=1.0; profile=\"https://trustedcomputinggroup.org/tdx/v1\"";
@@ -10,21 +11,22 @@ pub fn tdx_quote_media_type() -> Mime {
 }
 
 /// Create a mock quote for testing on non-TDX hardware
-#[cfg(feature = "mock")]
-pub fn generate_quote(input: [u8; 64]) -> Vec<u8> {
+#[cfg(test)]
+pub fn generate_quote(input: [u8; 64]) -> Result<Vec<u8>, AttestationGenerationError> {
     use rand_core::OsRng;
     let attestation_key = tdx_quote::SigningKey::random(&mut OsRng);
     let provisioning_certification_key = tdx_quote::SigningKey::random(&mut OsRng);
-    Quote::mock(
+
+    Ok(tdx_quote::Quote::mock(
         attestation_key.clone(),
         provisioning_certification_key.clone(),
         input,
         b"Mock cert chain".to_vec(),
     )
-    .as_bytes()
+    .as_bytes())
 }
 
-#[cfg(not(feature = "mock"))]
-pub fn generate_quote(input: [u8; 64]) -> Vec<u8> {
-    configfs_tsm::create_quote(input).unwrap()
+#[cfg(not(test))]
+pub fn generate_quote(input: [u8; 64]) -> Result<Vec<u8>, AttestationGenerationError> {
+    Ok(configfs_tsm::create_quote(input)?)
 }
