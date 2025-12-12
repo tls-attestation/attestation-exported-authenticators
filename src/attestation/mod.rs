@@ -1,3 +1,4 @@
+use cmw::Monad;
 use thiserror::Error;
 
 #[cfg(any(feature = "dcap-tdx", test))]
@@ -28,11 +29,11 @@ impl AttestationGenerator {
     pub async fn generate_attestation(
         &self,
         input_data: [u8; 64],
-    ) -> Result<Option<Vec<u8>>, AttestationGenerationError> {
+    ) -> Result<Option<Monad>, AttestationGenerationError> {
         match self.attestation_type {
             AttestationType::None => Ok(None),
             #[cfg(any(feature = "dcap-tdx", test))]
-            AttestationType::DcapTdx => Ok(Some(dcap_tdx::generate_quote(input_data)?)),
+            AttestationType::DcapTdx => Ok(Some(dcap_tdx::generate_to_monad(input_data)?)),
             #[cfg(not(any(feature = "dcap-tdx", test)))]
             _ => Err(AttestationGenerationError::AttestationTypeNotSupported),
         }
@@ -48,6 +49,8 @@ pub enum AttestationGenerationError {
     QuoteGeneration(#[from] configfs_tsm::QuoteGenerationError),
     #[error("Attestation type not supported")]
     AttestationTypeNotSupported,
+    #[error("Conceptual message wrappers")]
+    Cmw(#[from] cmw::Error),
 }
 
 #[derive(Error, Debug)]

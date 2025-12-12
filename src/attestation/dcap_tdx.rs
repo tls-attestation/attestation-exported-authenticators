@@ -1,4 +1,4 @@
-use cmw::Mime;
+use cmw::{Mime, Monad};
 use std::str::FromStr;
 
 use crate::attestation::AttestationGenerationError;
@@ -8,6 +8,14 @@ const TDX_QUOTE_MIME: &str =
 
 pub fn tdx_quote_media_type() -> Mime {
     Mime::from_str(TDX_QUOTE_MIME).expect("Failed to parse TDX quote media type")
+}
+
+pub fn generate_to_monad(input: [u8; 64]) -> Result<Monad, AttestationGenerationError> {
+    Ok(Monad::new_media_type(
+        tdx_quote_media_type(),
+        generate_quote(input)?,
+        None,
+    )?)
 }
 
 /// Create a mock quote for testing on non-TDX hardware

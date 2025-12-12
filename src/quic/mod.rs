@@ -4,13 +4,11 @@ mod test_helpers;
 use std::net::SocketAddr;
 
 use crate::{
-    attestation::{dcap_tdx, AttestationType},
-    authenticator::Authenticator,
-    certificate_request::CertificateRequest,
-    CMWAttestation, EXPORTER_SERVER_AUTHENTICATOR_FINISHED_KEY,
-    EXPORTER_SERVER_AUTHENTICATOR_HANDSHAKE_CONTEXT,
+    attestation::AttestationGenerator, authenticator::Authenticator,
+    certificate_request::CertificateRequest, CMWAttestation,
+    EXPORTER_SERVER_AUTHENTICATOR_FINISHED_KEY, EXPORTER_SERVER_AUTHENTICATOR_HANDSHAKE_CONTEXT,
 };
-use cmw::{Monad, CMW};
+use cmw::CMW;
 use quinn::ClientConfig;
 use rand_core::{OsRng, RngCore};
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
@@ -39,7 +37,7 @@ impl Clone for TlsServer {
 pub struct AttestedQuic {
     pub endpoint: quinn::Endpoint,
     pub tls_server: Option<TlsServer>,
-    pub attestion_type: AttestationType,
+    pub attestation_generator: AttestationGenerator,
 }
 
 impl AttestedQuic {
@@ -50,7 +48,7 @@ impl AttestedQuic {
             let incoming_conn = self.endpoint.accept().await.ok_or(Error::EndpointClosed)?;
             let conn = incoming_conn.await?;
 
-            Self::handle_connection_server(&conn, tls_server).await?;
+            self.handle_connection_server(&conn, tls_server).await?;
             Ok(conn)
         } else {
             Err(Error::NoServer)
@@ -93,6 +91,7 @@ impl AttestedQuic {
     ///
     /// This means accepting a [CertificateRequest] and responding with an [Authenticator]
     async fn handle_connection_server(
+        &self,
         conn: &quinn::Connection,
         tls_server: &TlsServer,
     ) -> Result<(), Error> {
@@ -112,10 +111,14 @@ impl AttestedQuic {
             &cert_request.certificate_request_context,
         )?;
 
-        // Generate a TDX quote using the exported keying material as input
-        let quote = dcap_tdx::generate_quote(keying_material)?;
+        let evidence = self
+            .attestation_generator
+            .generate_attestation(keying_material)
+            .await?
+            .unwrap();
 
-        let cmw = Monad::new_media_type(dcap_tdx::tdx_quote_media_type(), quote, None)?;
+        // // Generate a TDX quote using the exported keying material as input
+        // let quote = dcap_tdx::generate_quote(keying_material)?;
 
         let mut handshake_context_exporter = [0u8; 64];
         conn.export_keying_material(
@@ -134,7 +137,7 @@ impl AttestedQuic {
         let authenticator = Authenticator::new_with_cmw_attestation(
             tls_server.certificate_chain.clone(),
             tls_server.private_key.clone_key(),
-            CMWAttestation::new(CMW::Monad(cmw)),
+            CMWAttestation::new(CMW::Monad(evidence)),
             &cert_request,
             handshake_context_exporter,
             finished_key_exporter,
@@ -258,7 +261,7 @@ mod test {
     };
 
     use crate::{
-        attestation::AttestationType,
+        attestation::{AttestationGenerator, AttestationType},
         quic::{AttestedQuic, TlsServer},
     };
 
@@ -268,7 +271,9 @@ mod test {
         let quinn_server =
             create_quinn_server(cert_chain.clone(), keypair.clone_key(), None, false);
         let server = AttestedQuic {
-            attestion_type: AttestationType::DcapTdx,
+            attestation_generator: AttestationGenerator {
+                attestation_type: AttestationType::DcapTdx,
+            },
             endpoint: quinn_server,
             tls_server: Some(TlsServer {
                 certificate_chain: cert_chain.clone(),
@@ -287,7 +292,9 @@ mod test {
 
         let client_endpoint = create_quinn_client(&cert_chain);
         let client = AttestedQuic {
-            attestion_type: AttestationType::None,
+            attestation_generator: AttestationGenerator {
+                attestation_type: AttestationType::None,
+            },
             endpoint: client_endpoint,
             tls_server: None,
         };
@@ -320,7 +327,9 @@ mod test {
         );
 
         let alice_server = AttestedQuic {
-            attestion_type: AttestationType::DcapTdx,
+            attestation_generator: AttestationGenerator {
+                attestation_type: AttestationType::DcapTdx,
+            },
             endpoint: alice_quinn_server,
             tls_server: Some(TlsServer {
                 certificate_chain: alice_cert,
@@ -329,7 +338,9 @@ mod test {
         };
 
         let bob_server = AttestedQuic {
-            attestion_type: AttestationType::DcapTdx,
+            attestation_generator: AttestationGenerator {
+                attestation_type: AttestationType::DcapTdx,
+            },
             endpoint: bob_quinn_server,
             tls_server: Some(TlsServer {
                 certificate_chain: bob_cert,
