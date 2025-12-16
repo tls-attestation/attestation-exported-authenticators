@@ -14,7 +14,6 @@ use cmw::CMW;
 use quinn::ClientConfig;
 use rand_core::{OsRng, RngCore};
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
-use tdx_quote::Quote;
 use thiserror::Error;
 
 /// Details of a TLS server, or TLS client with client authentication
@@ -119,9 +118,6 @@ impl AttestedQuic {
             .generate_attestation(keying_material)
             .await?
             .unwrap();
-
-        // // Generate a TDX quote using the exported keying material as input
-        // let quote = dcap_tdx::generate_quote(keying_material)?;
 
         let mut handshake_context_exporter = [0u8; 64];
         conn.export_keying_material(

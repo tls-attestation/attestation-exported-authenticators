@@ -3,9 +3,11 @@ use std::str::FromStr;
 use tdx_quote::QuoteParseError;
 use thiserror::Error;
 
+/// The mime type for DCAP TDX
 const TDX_QUOTE_MIME: &str =
     "application/tdx-quote; version=1.0; profile=\"https://trustedcomputinggroup.org/tdx/v1\"";
 
+/// Returns the mime type for DCAP TDX
 pub fn tdx_quote_media_type() -> cmw::Mime {
     cmw::Mime::from_str(TDX_QUOTE_MIME).expect("Failed to parse TDX quote media type")
 }
@@ -13,6 +15,7 @@ pub fn tdx_quote_media_type() -> cmw::Mime {
 #[cfg(any(feature = "dcap-tdx", test))]
 pub mod dcap_tdx;
 
+/// The supported attestation types
 #[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
 pub enum AttestationType {
