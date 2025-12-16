@@ -4,9 +4,11 @@ mod test_helpers;
 use std::net::SocketAddr;
 
 use crate::{
-    attestation::AttestationGenerator, authenticator::Authenticator,
-    certificate_request::CertificateRequest, CMWAttestation,
-    EXPORTER_SERVER_AUTHENTICATOR_FINISHED_KEY, EXPORTER_SERVER_AUTHENTICATOR_HANDSHAKE_CONTEXT,
+    attestation::{AttestationGenerator, AttestationValidator},
+    authenticator::Authenticator,
+    certificate_request::CertificateRequest,
+    CMWAttestation, EXPORTER_SERVER_AUTHENTICATOR_FINISHED_KEY,
+    EXPORTER_SERVER_AUTHENTICATOR_HANDSHAKE_CONTEXT,
 };
 use cmw::CMW;
 use quinn::ClientConfig;
@@ -38,6 +40,7 @@ pub struct AttestedQuic {
     pub endpoint: quinn::Endpoint,
     pub tls_server: Option<TlsServer>,
     pub attestation_generator: AttestationGenerator,
+    pub attestation_validator: AttestationValidator,
 }
 
 impl AttestedQuic {
@@ -198,14 +201,10 @@ impl AttestedQuic {
         let cmw_attestation_extension = authenticator.get_attestation_cmw_extension()?;
         let cmw = cmw_attestation_extension.monad_cmw()?;
 
-        let quote = Quote::from_bytes(&cmw.value())?;
-
-        if quote.report_input_data() != keying_material {
-            return Err(Error::KeyMaterialMismatch);
-        }
-
-        // #[cfg(not(feature = "mock"))]
-        // quote.verify()?;
+        let _ = self
+            .attestation_validator
+            .validate_attestation(cmw, keying_material)
+            .await?;
 
         Ok(())
     }
@@ -245,6 +244,8 @@ pub enum Error {
     Cmw(#[from] cmw::Error),
     #[error("Attestation generation: {0}")]
     AttestationGeneration(#[from] crate::attestation::AttestationGenerationError),
+    #[error("Attestation verification: {0}")]
+    AttestationVerification(#[from] crate::attestation::AttestationVerificationError),
 }
 
 impl From<quinn::crypto::ExportKeyingMaterialError> for Error {
@@ -261,7 +262,7 @@ mod test {
     };
 
     use crate::{
-        attestation::{AttestationGenerator, AttestationType},
+        attestation::{AttestationGenerator, AttestationType, AttestationValidator},
         quic::{AttestedQuic, TlsServer},
     };
 
@@ -271,6 +272,7 @@ mod test {
         let quinn_server =
             create_quinn_server(cert_chain.clone(), keypair.clone_key(), None, false);
         let server = AttestedQuic {
+            attestation_validator: AttestationValidator {},
             attestation_generator: AttestationGenerator {
                 attestation_type: AttestationType::DcapTdx,
             },
@@ -292,6 +294,7 @@ mod test {
 
         let client_endpoint = create_quinn_client(&cert_chain);
         let client = AttestedQuic {
+            attestation_validator: AttestationValidator {},
             attestation_generator: AttestationGenerator {
                 attestation_type: AttestationType::None,
             },
@@ -327,6 +330,7 @@ mod test {
         );
 
         let alice_server = AttestedQuic {
+            attestation_validator: AttestationValidator {},
             attestation_generator: AttestationGenerator {
                 attestation_type: AttestationType::DcapTdx,
             },
@@ -338,6 +342,7 @@ mod test {
         };
 
         let bob_server = AttestedQuic {
+            attestation_validator: AttestationValidator {},
             attestation_generator: AttestationGenerator {
                 attestation_type: AttestationType::DcapTdx,
             },

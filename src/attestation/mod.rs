@@ -1,5 +1,14 @@
 use cmw::Monad;
+use std::str::FromStr;
+use tdx_quote::QuoteParseError;
 use thiserror::Error;
+
+const TDX_QUOTE_MIME: &str =
+    "application/tdx-quote; version=1.0; profile=\"https://trustedcomputinggroup.org/tdx/v1\"";
+
+pub fn tdx_quote_media_type() -> cmw::Mime {
+    cmw::Mime::from_str(TDX_QUOTE_MIME).expect("Failed to parse TDX quote media type")
+}
 
 #[cfg(any(feature = "dcap-tdx", test))]
 pub mod dcap_tdx;
@@ -12,7 +21,7 @@ pub enum AttestationType {
 }
 
 /// Can generate a local attestation based on attestation type
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct AttestationGenerator {
     pub attestation_type: AttestationType,
 }
@@ -40,6 +49,32 @@ impl AttestationGenerator {
     }
 }
 
+#[derive(Clone, Debug)]
+pub struct AttestationValidator {}
+
+impl AttestationValidator {
+    pub async fn validate_attestation(
+        &self,
+        monad: Monad,
+        expected_input_data: [u8; 64],
+    ) -> Result<(), AttestationVerificationError> {
+        match monad.type_().as_str() {
+            TDX_QUOTE_MIME => {
+                let quote = tdx_quote::Quote::from_bytes(&monad.value())?;
+
+                if quote.report_input_data() != expected_input_data {
+                    return Err(AttestationVerificationError::InputData);
+                }
+
+                // #[cfg(not(feature = "mock"))]
+                // quote.verify()?;
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+}
+
 #[derive(Error, Debug)]
 pub enum AttestationGenerationError {
     #[cfg(any(feature = "dcap-tdx", test))]
@@ -60,4 +95,8 @@ pub enum AttestationVerificationError {
     Tdx(#[from] tdx_quote::QuoteVerificationError),
     #[error("Attestation type not supported")]
     AttestationTypeNotSupported,
+    #[error("Quore parse: {0}")]
+    QuoteParse(#[from] QuoteParseError),
+    #[error("Quote input data does not match exporter")]
+    InputData,
 }
