@@ -2,21 +2,20 @@ mod helpers;
 
 use std::str::FromStr;
 
-use cmw::{CMW, Mime, Monad};
+use cmw::{Mime, Monad, CMW};
 use helpers::{
     create_quinn_client, create_quinn_server, create_quinn_servers, generate_certificate_chain,
 };
 
 use attestation_exported_authenticators::{
-    CMWAttestation, EXPORTER_SERVER_AUTHENTICATOR_FINISHED_KEY,
-    EXPORTER_SERVER_AUTHENTICATOR_HANDSHAKE_CONTEXT, authenticator::Authenticator,
-    certificate_request::CertificateRequest,
+    authenticator::Authenticator, certificate_request::ClientCertificateRequest, CMWAttestation,
+    EXPORTER_SERVER_AUTHENTICATOR_FINISHED_KEY, EXPORTER_SERVER_AUTHENTICATOR_HANDSHAKE_CONTEXT,
 };
 use rand_core::{OsRng, RngCore};
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use tdx_quote::Quote;
 
-/// Given an incoming connection, accept a [CertificateRequest] and respond with an attestation [Authenticator]
+/// Given an incoming connection, accept a [ClientCertificateRequest] and respond with an attestation [Authenticator]
 async fn handle_connection_server(
     conn: &quinn::Connection,
     certificate_chain: Vec<CertificateDer<'static>>,
@@ -27,7 +26,7 @@ async fn handle_connection_server(
 
     // Read and deserialize a CertificateRequest from the client
     let cert_request_serialized = recv_stream.read_to_end(1024).await.unwrap();
-    let cert_request = CertificateRequest::decode(&cert_request_serialized).unwrap();
+    let cert_request = ClientCertificateRequest::decode(&cert_request_serialized).unwrap();
 
     // Now we prepare an authenticator with an attestation using exported key material (based
     // on given context) as input
@@ -69,7 +68,7 @@ async fn handle_connection_server(
         certificate_chain,
         private_key,
         CMWAttestation::new(CMW::Monad(cmw)),
-        &cert_request,
+        cert_request,
         handshake_context_exporter,
         finished_key_exporter,
     )
@@ -89,7 +88,7 @@ async fn handle_connection_client(conn: &quinn::Connection) {
     let mut context = [0u8; 32];
     OsRng.fill_bytes(&mut context);
 
-    let cert_request = CertificateRequest {
+    let cert_request = ClientCertificateRequest {
         certificate_request_context: context.to_vec(),
         extensions: b"cmw_attestation".to_vec(), // TODO #14
     };
@@ -126,15 +125,13 @@ async fn handle_connection_client(conn: &quinn::Connection) {
     )
     .unwrap();
 
-    assert!(
-        authenticator
-            .verify(
-                &cert_request,
-                &handshake_context_exporter,
-                &finished_key_exporter
-            )
-            .is_ok()
-    );
+    assert!(authenticator
+        .verify(
+            cert_request,
+            &handshake_context_exporter,
+            &finished_key_exporter
+        )
+        .is_ok());
 
     let cmw_attestation_extension = authenticator.get_attestation_cmw_extension().unwrap();
     let cmw = cmw_attestation_extension
