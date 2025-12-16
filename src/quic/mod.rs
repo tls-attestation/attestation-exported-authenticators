@@ -268,7 +268,7 @@ mod test {
         let quinn_server =
             create_quinn_server(cert_chain.clone(), keypair.clone_key(), None, false);
         let server = AttestedQuic {
-            attestation_validator: AttestationValidator {},
+            attestation_validator: AttestationValidator::new_mock_tdx(),
             attestation_generator: AttestationGenerator {
                 attestation_type: AttestationType::DcapTdx,
             },
@@ -290,7 +290,7 @@ mod test {
 
         let client_endpoint = create_quinn_client(&cert_chain);
         let client = AttestedQuic {
-            attestation_validator: AttestationValidator {},
+            attestation_validator: AttestationValidator::new_mock_tdx(),
             attestation_generator: AttestationGenerator {
                 attestation_type: AttestationType::None,
             },
@@ -300,7 +300,9 @@ mod test {
 
         let client_handle = tokio::spawn(async move {
             // Connect to the server
-            let _conn = client.connect(server_addr, "localhost").await;
+            let conn = client.connect(server_addr, "localhost").await.unwrap();
+
+            conn.close(0u32.into(), b"Normal shutdown");
         });
 
         // Wait for both the client and server tasks to finish.
@@ -326,7 +328,7 @@ mod test {
         );
 
         let alice_server = AttestedQuic {
-            attestation_validator: AttestationValidator {},
+            attestation_validator: AttestationValidator::new_mock_tdx(),
             attestation_generator: AttestationGenerator {
                 attestation_type: AttestationType::DcapTdx,
             },
@@ -338,7 +340,7 @@ mod test {
         };
 
         let bob_server = AttestedQuic {
-            attestation_validator: AttestationValidator {},
+            attestation_validator: AttestationValidator::new_mock_tdx(),
             attestation_generator: AttestationGenerator {
                 attestation_type: AttestationType::DcapTdx,
             },
@@ -370,12 +372,22 @@ mod test {
 
         let alice_client_handle = tokio::spawn(async move {
             // Connect to bob
-            let _conn = alice_server.connect(bob_server_addr, "localhost").await;
+            let conn = alice_server
+                .connect(bob_server_addr, "localhost")
+                .await
+                .unwrap();
+
+            conn.close(0u32.into(), b"Normal shutdown");
         });
 
         let bob_client_handle = tokio::spawn(async move {
             // Connect to alice
-            let _conn = bob_server.connect(alice_server_addr, "localhost").await;
+            let conn = bob_server
+                .connect(alice_server_addr, "localhost")
+                .await
+                .unwrap();
+
+            conn.close(0u32.into(), b"Normal shutdown");
         });
 
         // Wait for all tasks to finish.

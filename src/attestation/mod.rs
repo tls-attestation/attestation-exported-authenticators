@@ -52,10 +52,48 @@ impl AttestationGenerator {
     }
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub enum MultiMeasurements {
+    DcapTdx {
+        mrtd: [u8; 48],
+        rtmr0: [u8; 48],
+        rtmr1: [u8; 48],
+        rtmr2: [u8; 48],
+        rtmr3: [u8; 48],
+    },
+    None,
+}
+
+impl MultiMeasurements {
+    fn from_tdx_quote(input: &tdx_quote::Quote) -> Self {
+        Self::DcapTdx {
+            mrtd: input.mrtd(),
+            rtmr0: input.rtmr0(),
+            rtmr1: input.rtmr1(),
+            rtmr2: input.rtmr2(),
+            rtmr3: input.rtmr3(),
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
-pub struct AttestationValidator {}
+pub struct AttestationValidator {
+    pub accepted_measurements: Vec<MultiMeasurements>,
+}
 
 impl AttestationValidator {
+    pub fn new_mock_tdx() -> Self {
+        Self {
+            accepted_measurements: vec![MultiMeasurements::DcapTdx {
+                mrtd: [0; 48],
+                rtmr0: [0; 48],
+                rtmr1: [0; 48],
+                rtmr2: [0; 48],
+                rtmr3: [0; 48],
+            }],
+        }
+    }
+
     pub async fn validate_attestation(
         &self,
         monad: Monad,
@@ -67,6 +105,16 @@ impl AttestationValidator {
 
                 if quote.report_input_data() != expected_input_data {
                     return Err(AttestationVerificationError::InputData);
+                }
+                let measurements = MultiMeasurements::from_tdx_quote(&quote);
+
+                if self
+                    .accepted_measurements
+                    .iter()
+                    .find(|m| **m == measurements)
+                    .is_none()
+                {
+                    return Err(AttestationVerificationError::MeasurementsNotAccepted);
                 }
 
                 // #[cfg(not(feature = "mock"))]
@@ -102,4 +150,6 @@ pub enum AttestationVerificationError {
     QuoteParse(#[from] QuoteParseError),
     #[error("Quote input data does not match exporter")]
     InputData,
+    #[error("Measurements not accepted")]
+    MeasurementsNotAccepted,
 }
