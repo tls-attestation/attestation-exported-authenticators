@@ -52,6 +52,7 @@ impl AttestationGenerator {
     }
 }
 
+/// Measurement values for the supported attestation types
 #[allow(clippy::large_enum_variant)]
 #[derive(Clone, Debug, PartialEq)]
 pub enum MultiMeasurements {
