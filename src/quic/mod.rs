@@ -197,8 +197,7 @@ impl AttestedQuic {
         let cmw_attestation_extension = authenticator.get_attestation_cmw_extension()?;
         let cmw = cmw_attestation_extension.monad_cmw()?;
 
-        let _ = self
-            .attestation_validator
+        self.attestation_validator
             .validate_attestation(cmw, keying_material)
             .await?;
 

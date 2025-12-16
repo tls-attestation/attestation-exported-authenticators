@@ -52,6 +52,7 @@ impl AttestationGenerator {
     }
 }
 
+#[allow(clippy::large_enum_variant)]
 #[derive(Clone, Debug, PartialEq)]
 pub enum MultiMeasurements {
     DcapTdx {
@@ -99,6 +100,7 @@ impl AttestationValidator {
         monad: Monad,
         expected_input_data: [u8; 64],
     ) -> Result<(), AttestationVerificationError> {
+        #[allow(clippy::single_match)]
         match monad.type_().as_str() {
             TDX_QUOTE_MIME => {
                 let quote = tdx_quote::Quote::from_bytes(&monad.value())?;
@@ -108,12 +110,7 @@ impl AttestationValidator {
                 }
                 let measurements = MultiMeasurements::from_tdx_quote(&quote);
 
-                if self
-                    .accepted_measurements
-                    .iter()
-                    .find(|m| **m == measurements)
-                    .is_none()
-                {
+                if !self.accepted_measurements.contains(&measurements) {
                     return Err(AttestationVerificationError::MeasurementsNotAccepted);
                 }
 
