@@ -12,7 +12,6 @@ pub fn tdx_quote_media_type() -> cmw::Mime {
     cmw::Mime::from_str(TDX_QUOTE_MIME).expect("Failed to parse TDX quote media type")
 }
 
-#[cfg(any(feature = "dcap-tdx", test))]
 pub mod dcap_tdx;
 
 /// The supported attestation types
@@ -44,10 +43,7 @@ impl AttestationGenerator {
     ) -> Result<Option<Monad>, AttestationGenerationError> {
         match self.attestation_type {
             AttestationType::None => Ok(None),
-            #[cfg(any(feature = "dcap-tdx", test))]
             AttestationType::DcapTdx => Ok(Some(dcap_tdx::generate_to_monad(input_data)?)),
-            #[cfg(not(any(feature = "dcap-tdx", test)))]
-            _ => Err(AttestationGenerationError::AttestationTypeNotSupported),
         }
     }
 }
@@ -126,7 +122,6 @@ impl AttestationValidator {
 
 #[derive(Error, Debug)]
 pub enum AttestationGenerationError {
-    #[cfg(any(feature = "dcap-tdx", test))]
     #[error("TDX quote verification: {0}")]
     Tdx(#[from] tdx_quote::QuoteVerificationError),
     #[error("Quote generation: {0}")]
@@ -139,7 +134,6 @@ pub enum AttestationGenerationError {
 
 #[derive(Error, Debug)]
 pub enum AttestationVerificationError {
-    #[cfg(any(feature = "dcap-tdx", test))]
     #[error("TDX quote verification: {0}")]
     Tdx(#[from] tdx_quote::QuoteVerificationError),
     #[error("Attestation type not supported")]
