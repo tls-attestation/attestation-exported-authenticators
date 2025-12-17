@@ -14,7 +14,7 @@ thiserror = "2.0.16"
 getrandom = "0.2.16"
 ring = "0.17.14"
 quinn = { version = "0.11.9", optional = true }
-tdx-quote = { version = "0.0.4", optional = true }
+tdx-quote = { version = "0.0.4" }
 configfs-tsm = { version = "0.0.2" }
 rand_core = { version = "0.6.4", features = ["getrandom"] }
 rustls-webpki = { version = "0.103.8", default-features = false, features = ["ring"] }
@@ -28,8 +28,7 @@ tdx-quote = { version = "0.0.4", features = ["mock"] }
 hex = "0.4.3"
 
 [features]
-default = ["quic", "dcap-tdx"]
+default = ["quic"]
 mock = ["tdx-quote/mock"]
 wasm = ["getrandom/js", "ring/wasm32_unknown_unknown_js"]
 quic = ["quinn"]
-dcap-tdx = ["tdx-quote"]
