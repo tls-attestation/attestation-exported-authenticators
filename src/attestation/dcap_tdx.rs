@@ -1,6 +1,8 @@
 use cmw::Monad;
 
-use crate::attestation::AttestationGenerationError;
+use crate::attestation::{
+    AttestationGenerationError, AttestationVerificationError, MultiMeasurements,
+};
 
 pub fn generate_to_monad(input: [u8; 64]) -> Result<Monad, AttestationGenerationError> {
     Ok(Monad::new_media_type(
@@ -29,4 +31,21 @@ pub fn generate_quote(input: [u8; 64]) -> Result<Vec<u8>, AttestationGenerationE
 #[cfg(not(test))]
 pub fn generate_quote(input: [u8; 64]) -> Result<Vec<u8>, AttestationGenerationError> {
     Ok(configfs_tsm::create_quote(input)?)
+}
+
+pub async fn validate_attestation(
+    input: &[u8],
+    expected_input_data: [u8; 64],
+) -> Result<MultiMeasurements, AttestationVerificationError> {
+    let quote = tdx_quote::Quote::from_bytes(input)?;
+
+    // Check input data
+    if quote.report_input_data() != expected_input_data {
+        return Err(AttestationVerificationError::InputData);
+    }
+
+    // #[cfg(not(feature = "mock"))]
+    // quote.verify()?;
+    //
+    Ok(MultiMeasurements::from_tdx_quote(&quote))
 }

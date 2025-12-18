@@ -1,3 +1,6 @@
+//! Attestation generation and verification
+//!
+//! Currently only DCAP-TDX is supported
 use cmw::Monad;
 use std::str::FromStr;
 use tdx_quote::QuoteParseError;
@@ -29,6 +32,7 @@ pub struct AttestationGenerator {
 }
 
 impl AttestationGenerator {
+    /// This is used on non-CVM platforms
     pub fn with_no_attestation() -> Self {
         Self {
             attestation_type: AttestationType::None,
@@ -36,7 +40,6 @@ impl AttestationGenerator {
     }
 
     /// Generate an attestation exchange message
-    #[allow(unused_variables)]
     pub async fn generate_attestation(
         &self,
         input_data: [u8; 64],
@@ -74,12 +77,15 @@ impl MultiMeasurements {
     }
 }
 
+/// Use to validate attestations based on accepted measurement values
 #[derive(Clone, Debug)]
 pub struct AttestationValidator {
+    /// Accepted measurement values for any attestation type
     pub accepted_measurements: Vec<MultiMeasurements>,
 }
 
 impl AttestationValidator {
+    /// Used only in tests to verify mock quotes with all-zero registers
     pub fn new_mock_tdx() -> Self {
         Self {
             accepted_measurements: vec![MultiMeasurements::DcapTdx {
@@ -92,34 +98,30 @@ impl AttestationValidator {
         }
     }
 
+    /// Given a conceptual message wrappers monad containing attestation evidence and type, verify
+    /// an attestation against given expected input data
     pub async fn validate_attestation(
         &self,
         monad: Monad,
         expected_input_data: [u8; 64],
     ) -> Result<(), AttestationVerificationError> {
-        #[allow(clippy::single_match)]
-        match monad.type_().as_str() {
+        let measurements = match monad.type_().as_str() {
             TDX_QUOTE_MIME => {
-                let quote = tdx_quote::Quote::from_bytes(&monad.value())?;
-
-                if quote.report_input_data() != expected_input_data {
-                    return Err(AttestationVerificationError::InputData);
-                }
-                let measurements = MultiMeasurements::from_tdx_quote(&quote);
-
-                if !self.accepted_measurements.contains(&measurements) {
-                    return Err(AttestationVerificationError::MeasurementsNotAccepted);
-                }
-
-                // #[cfg(not(feature = "mock"))]
-                // quote.verify()?;
+                dcap_tdx::validate_attestation(&monad.value(), expected_input_data).await?
             }
-            _ => {}
+            _ => return Err(AttestationVerificationError::AttestationTypeNotSupported),
+        };
+
+        // Check measurements match accepted measurements
+        if !self.accepted_measurements.contains(&measurements) {
+            return Err(AttestationVerificationError::MeasurementsNotAccepted);
         }
+
         Ok(())
     }
 }
 
+/// An error when generating an attestation
 #[derive(Error, Debug)]
 pub enum AttestationGenerationError {
     #[error("TDX quote verification: {0}")]
@@ -132,6 +134,7 @@ pub enum AttestationGenerationError {
     Cmw(#[from] cmw::Error),
 }
 
+/// An error when validating an attestation
 #[derive(Error, Debug)]
 pub enum AttestationVerificationError {
     #[error("TDX quote verification: {0}")]
