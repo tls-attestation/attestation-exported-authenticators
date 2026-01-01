@@ -7,7 +7,7 @@ use crate::{
     attestation::{AttestationGenerator, AttestationValidator},
     authenticator::Authenticator,
     certificate_request::CertificateRequest,
-    CMWAttestation, EXPORTER_SERVER_AUTHENTICATOR_FINISHED_KEY,
+    CMWAttestation, EXPORTER_ATTESTATION_BINDING_LABEL, EXPORTER_SERVER_AUTHENTICATOR_FINISHED_KEY,
     EXPORTER_SERVER_AUTHENTICATOR_HANDSHAKE_CONTEXT,
 };
 use cmw::CMW;
@@ -109,7 +109,7 @@ impl AttestedQuic {
         let mut keying_material = [0u8; 64];
         conn.export_keying_material(
             &mut keying_material,
-            b"label", // TODO #8
+            EXPORTER_ATTESTATION_BINDING_LABEL,
             &cert_request.certificate_request_context,
         )?;
 
@@ -165,7 +165,7 @@ impl AttestedQuic {
         let mut keying_material = [0u8; 64];
         conn.export_keying_material(
             &mut keying_material,
-            b"label", // TODO #8
+            EXPORTER_ATTESTATION_BINDING_LABEL,
             &cert_request.certificate_request_context,
         )?;
 

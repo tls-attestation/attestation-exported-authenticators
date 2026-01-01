@@ -26,6 +26,9 @@ pub static EXPORTER_CLIENT_AUTHENTICATOR_FINISHED_KEY: &[u8] =
 pub static EXPORTER_SERVER_AUTHENTICATOR_FINISHED_KEY: &[u8] =
     b"EXPORTER-server authenticator finished key";
 
+/// Label used in attestation binding context
+pub static EXPORTER_ATTESTATION_BINDING_LABEL: &[u8] = b"Attestation Binding";
+
 /// An error when handling a cmw_attestion certificate extension
 #[derive(Error, Debug)]
 pub enum CmwAttestationCertifcateExtensionError {
