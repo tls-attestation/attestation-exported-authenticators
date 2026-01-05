@@ -1,4 +1,4 @@
-//! Helper functions for integration tests
+//! Helper functions for tests
 use quinn::{
     crypto::rustls::{QuicClientConfig, QuicServerConfig},
     ClientConfig, ServerConfig,
@@ -108,7 +108,7 @@ pub fn create_quinn_server(
     quic_server
 }
 
-/// Generate two quinn servers, configurated for mutual attestation
+/// Setup two quinn servers, configurated for mutual attestation
 pub fn create_quinn_servers(
     alice_certificate_chain: Vec<CertificateDer<'static>>,
     alice_key: PrivateKeyDer<'static>,

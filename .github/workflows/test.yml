@@ -31,9 +31,9 @@ jobs:
       run: cargo clippy -- -D warnings
 
     - name: Run cargo test
-      run: cargo test
+      run: cargo test --features quic
 
     - name: Check compiles for wasm32-unknown-unknown
       run: |
         rustup target add wasm32-unknown-unknown
-        RUSTFLAGS='--cfg getrandom_backend="wasm_js"' cargo check --target wasm32-unknown-unknown --features wasm
+        RUSTFLAGS='--cfg getrandom_backend="wasm_js"' cargo check --target wasm32-unknown-unknown --features wasm --no-default-features

@@ -1,10 +1,13 @@
+pub mod attestation;
 pub mod authenticator;
 pub mod certificate_request;
 mod tls_handshake_messages;
 
+#[cfg(any(feature = "quic", test))]
+pub mod quic;
+
 use thiserror::Error;
-pub use tls_handshake_messages::CMWAttestation;
-pub use tls_handshake_messages::Extension;
+pub use tls_handshake_messages::{CMWAttestation, Extension, VerificationError};
 use x509_parser::error::X509Error;
 
 /// Label used in client authenticator handshake context
@@ -22,6 +25,9 @@ pub static EXPORTER_CLIENT_AUTHENTICATOR_FINISHED_KEY: &[u8] =
 /// Label used in server authenticator finished message HMAC key
 pub static EXPORTER_SERVER_AUTHENTICATOR_FINISHED_KEY: &[u8] =
     b"EXPORTER-server authenticator finished key";
+
+/// Label used in attestation binding context
+pub static EXPORTER_ATTESTATION_BINDING_LABEL: &[u8] = b"Attestation Binding";
 
 /// An error when handling a cmw_attestion certificate extension
 #[derive(Error, Debug)]
