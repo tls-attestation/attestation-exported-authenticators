@@ -18,4 +18,6 @@ By default, this test will use mock quotes so that the test will run on non-TDX 
 cargo test --no-default-features
 ```
 
+This crate can compile to `wasm32-unknown-unknown` if default features are disabled.
+
 This work is supported in part by the [Cypherpunk fellowship](https://cypherpunk.camp/#fellowship) program.

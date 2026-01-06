@@ -1,4 +1,7 @@
-use rustls::pki_types::{CertificateDer, PrivateKeyDer};
+use rustls::{
+    crypto::CryptoProvider,
+    pki_types::{CertificateDer, PrivateKeyDer},
+};
 use thiserror::Error;
 
 use crate::{
@@ -20,6 +23,7 @@ pub struct Authenticator {
 
 impl Authenticator {
     pub fn new(
+        provider: &CryptoProvider,
         certificate_chain: Vec<CertificateDer>,
         private_key: PrivateKeyDer,
         extensions: Vec<Extension>,
@@ -49,6 +53,7 @@ impl Authenticator {
         };
 
         let certificate_verify = CertificateVerify::new(
+            provider,
             &certificate,
             private_key,
             &certificate_request,
@@ -73,6 +78,7 @@ impl Authenticator {
     /// Create a new authenticator with a cmw_attestation extension.
     /// Takes an encoded CMW message.
     pub fn new_with_cmw_attestation(
+        provider: &CryptoProvider,
         certificate_chain: Vec<CertificateDer>,
         private_key: PrivateKeyDer,
         cmw_attestation: CMWAttestation,
@@ -81,6 +87,7 @@ impl Authenticator {
         finished_key_exporter: [u8; 32],
     ) -> Result<Self, EncodeError> {
         Self::new(
+            provider,
             certificate_chain,
             private_key,
             vec![Extension::new_attestation_cmw(
@@ -123,6 +130,7 @@ impl Authenticator {
 
     pub fn verify(
         &self,
+        provider: &CryptoProvider,
         certificate_request: impl Into<CertificateRequest>,
         handshake_context_exporter: &[u8; 64],
         finished_key_exporter: &[u8; 32],
@@ -142,6 +150,7 @@ impl Authenticator {
         }
 
         self.certificate_verify.verify(
+            provider,
             &self.certificate,
             &certificate_request,
             handshake_context_exporter,
@@ -182,8 +191,11 @@ mod tests {
     use rand_core::{OsRng, RngCore};
     use rcgen::CertificateParams;
     use rustls::pki_types::PrivatePkcs8KeyDer;
+    use std::sync::Once;
 
     use super::*;
+
+    static RUSTLS_INIT: Once = Once::new();
 
     fn create_cert_der(keypair: &rcgen::KeyPair) -> Vec<u8> {
         let params = CertificateParams::new(["localhost".to_string()]).unwrap();
@@ -201,10 +213,17 @@ mod tests {
         }
     }
 
+    fn ensure_rustls_provider_installed() {
+        RUSTLS_INIT.call_once(|| {
+            rustls::crypto::ring::default_provider()
+                .install_default()
+                .unwrap();
+        });
+    }
+
     #[test]
     fn encode_decode_authenticator() {
-        let ring_provider = rustls::crypto::ring::default_provider();
-        rustls::crypto::CryptoProvider::install_default(ring_provider).unwrap();
+        ensure_rustls_provider_installed();
 
         let keypair = rcgen::KeyPair::generate().unwrap();
         let cert_der = create_cert_der(&keypair);
@@ -216,7 +235,10 @@ mod tests {
         let handshake_context_exporter = [0; 64];
         let finished_key_exporter = [0; 32];
 
+        let provider = CryptoProvider::get_default().unwrap();
+
         let authenticator = Authenticator::new(
+            &provider,
             vec![cert_der.into()],
             private_key_der,
             Vec::new(), // extensions
@@ -232,6 +254,7 @@ mod tests {
 
         authenticator
             .verify(
+                &provider,
                 certificate_request,
                 &handshake_context_exporter,
                 &finished_key_exporter,
