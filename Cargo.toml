@@ -5,20 +5,22 @@ edition = "2024"
 license = "Apache-2.0"
 
 [dependencies]
-rustls = { version = "0.23.5", default-features = false, features=["ring"] }
+rustls = "0.23.5"
 x509-parser = "0.18.0"
 asn1-rs = "0.7.1"
 sha2 = "0.10.9"
 hmac = "0.12.1"
 thiserror = "2.0.16"
 getrandom = "0.2.16"
-ring = "0.17.14"
 quinn = { version = "0.11.9", optional = true }
 tdx-quote = { version = "0.0.4" }
 configfs-tsm = { version = "0.0.2" }
 rand_core = { version = "0.6.4", features = ["getrandom"] }
-rustls-webpki = { version = "0.103.8", default-features = false, features = ["ring"] }
+rustls-webpki = "0.103.8"
 cmw = { git = "https://github.com/veraison/rust-cmw.git" }
+
+[target.'cfg(all(target_family = "wasm", target_os = "unknown"))'.dependencies]
+rustls-pki-types = { version = "1.12.0", features = ["web"] }
 
 [dev-dependencies]
 quinn = "0.11.9"
@@ -30,5 +32,5 @@ hex = "0.4.3"
 [features]
 default = ["quic"]
 mock = ["tdx-quote/mock"]
-wasm = ["getrandom/js", "ring/wasm32_unknown_unknown_js"]
+wasm = ["getrandom/js"]
 quic = ["quinn"]
