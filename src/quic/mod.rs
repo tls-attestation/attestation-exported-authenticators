@@ -6,7 +6,7 @@ use std::{net::SocketAddr, sync::Arc};
 use crate::{
     attestation::{AttestationGenerator, AttestationValidator},
     authenticator::Authenticator,
-    certificate_request::CertificateRequest,
+    certificate_request::ClientCertificateRequest,
     CMWAttestation, EXPORTER_ATTESTATION_BINDING_LABEL, EXPORTER_SERVER_AUTHENTICATOR_FINISHED_KEY,
     EXPORTER_SERVER_AUTHENTICATOR_HANDSHAKE_CONTEXT,
 };
@@ -95,7 +95,7 @@ impl AttestedQuic {
 
     /// Do an attestation exchange with an incoming connection
     ///
-    /// This means accepting a [CertificateRequest] and responding with an [Authenticator]
+    /// This means accepting a [ClientCertificateRequest] and responding with an [Authenticator]
     async fn handle_connection_server(
         &self,
         conn: &quinn::Connection,
@@ -104,9 +104,9 @@ impl AttestedQuic {
         // Wait for a bidirectional stream to be opened by the client
         let (mut send_stream, mut recv_stream) = conn.accept_bi().await?;
 
-        // Read and deserialize a CertificateRequest from the client
+        // Read and deserialize a ClientCertificateRequest from the client
         let cert_request_serialized = recv_stream.read_to_end(1024).await?;
-        let cert_request = CertificateRequest::decode(&cert_request_serialized)?;
+        let cert_request = ClientCertificateRequest::decode(&cert_request_serialized)?;
 
         // Now we prepare an authenticator with an attestation using exported key material (based
         // on given context) as input
@@ -142,7 +142,7 @@ impl AttestedQuic {
             tls_server.certificate_chain.clone(),
             tls_server.private_key.clone_key(),
             CMWAttestation::new(CMW::Monad(evidence)),
-            &cert_request,
+            cert_request,
             handshake_context_exporter,
             finished_key_exporter,
         )?;
@@ -159,7 +159,7 @@ impl AttestedQuic {
         let mut context = [0u8; 32];
         OsRng.fill_bytes(&mut context);
 
-        let cert_request = CertificateRequest {
+        let cert_request = ClientCertificateRequest {
             certificate_request_context: context.to_vec(),
             extensions: b"cmw_attestation".to_vec(), // TODO #14
         };
@@ -195,7 +195,7 @@ impl AttestedQuic {
 
         authenticator.verify(
             self.provider.as_ref(),
-            &cert_request,
+            cert_request,
             &handshake_context_exporter,
             &finished_key_exporter,
         )?;
