@@ -1,7 +1,7 @@
 #[cfg(test)]
 mod test_helpers;
 
-use std::net::SocketAddr;
+use std::{net::SocketAddr, sync::Arc};
 
 use crate::{
     attestation::{AttestationGenerator, AttestationValidator},
@@ -13,7 +13,10 @@ use crate::{
 use cmw::CMW;
 use quinn::ClientConfig;
 use rand_core::{OsRng, RngCore};
-use rustls::pki_types::{CertificateDer, PrivateKeyDer};
+use rustls::{
+    crypto::CryptoProvider,
+    pki_types::{CertificateDer, PrivateKeyDer},
+};
 use thiserror::Error;
 
 /// Details of a TLS server, or TLS client with client authentication
@@ -36,6 +39,7 @@ impl Clone for TlsServer {
 /// An attested QUIC endpoint (server or client)
 #[derive(Clone)]
 pub struct AttestedQuic {
+    pub provider: Arc<CryptoProvider>,
     pub endpoint: quinn::Endpoint,
     pub tls_server: Option<TlsServer>,
     pub attestation_generator: AttestationGenerator,
@@ -134,6 +138,7 @@ impl AttestedQuic {
         )?;
 
         let authenticator = Authenticator::new_with_cmw_attestation(
+            self.provider.as_ref(),
             tls_server.certificate_chain.clone(),
             tls_server.private_key.clone_key(),
             CMWAttestation::new(CMW::Monad(evidence)),
@@ -189,6 +194,7 @@ impl AttestedQuic {
         )?;
 
         authenticator.verify(
+            self.provider.as_ref(),
             &cert_request,
             &handshake_context_exporter,
             &finished_key_exporter,
@@ -267,6 +273,7 @@ mod test {
         let quinn_server =
             create_quinn_server(cert_chain.clone(), keypair.clone_key(), None, false);
         let server = AttestedQuic {
+            provider: rustls::crypto::aws_lc_rs::default_provider().into(),
             attestation_validator: AttestationValidator::new_mock_tdx(),
             attestation_generator: AttestationGenerator {
                 attestation_type: AttestationType::DcapTdx,
@@ -289,6 +296,7 @@ mod test {
 
         let client_endpoint = create_quinn_client(&cert_chain);
         let client = AttestedQuic {
+            provider: rustls::crypto::aws_lc_rs::default_provider().into(),
             attestation_validator: AttestationValidator::new_mock_tdx(),
             attestation_generator: AttestationGenerator {
                 attestation_type: AttestationType::None,
@@ -327,6 +335,7 @@ mod test {
         );
 
         let alice_server = AttestedQuic {
+            provider: rustls::crypto::aws_lc_rs::default_provider().into(),
             attestation_validator: AttestationValidator::new_mock_tdx(),
             attestation_generator: AttestationGenerator {
                 attestation_type: AttestationType::DcapTdx,
@@ -339,6 +348,7 @@ mod test {
         };
 
         let bob_server = AttestedQuic {
+            provider: rustls::crypto::aws_lc_rs::default_provider().into(),
             attestation_validator: AttestationValidator::new_mock_tdx(),
             attestation_generator: AttestationGenerator {
                 attestation_type: AttestationType::DcapTdx,

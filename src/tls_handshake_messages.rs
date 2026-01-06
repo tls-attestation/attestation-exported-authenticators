@@ -4,7 +4,7 @@
 
 use std::io::{Cursor, Read, Write};
 
-use cmw::{CMW, Monad};
+use cmw::{Monad, CMW};
 use hmac::{Hmac, Mac};
 use rustls::{crypto::CryptoProvider, pki_types::PrivateKeyDer};
 use sha2::{Digest, Sha256};
@@ -12,7 +12,7 @@ use thiserror::Error;
 use webpki::RawPublicKeyEntity;
 use x509_parser::prelude::*;
 
-use crate::{DecodeError, EncodeError, certificate_request::CertificateRequest};
+use crate::{certificate_request::CertificateRequest, DecodeError, EncodeError};
 
 /// Represents the different possible handshake message types
 // Dead code allowed because not all variants are constructed
@@ -124,13 +124,15 @@ pub struct CertificateVerify {
 
 impl CertificateVerify {
     pub fn new(
+        provider: &CryptoProvider,
         certificate: &Certificate,
         private_key: PrivateKeyDer,
         cerificate_request: &CertificateRequest,
         handshake_context_exporter: &[u8; 64],
     ) -> Result<Self, EncodeError> {
-        let signing_key = rustls::crypto::ring::sign::any_supported_type(&private_key)?;
-        let provider = CryptoProvider::get_default().ok_or(EncodeError::NoProvider)?;
+        let signing_key = provider
+            .key_provider
+            .load_private_key(private_key.clone_key())?;
 
         let supported_schemes = provider
             .signature_verification_algorithms
@@ -208,6 +210,7 @@ impl CertificateVerify {
     /// Verify the signature
     pub fn verify(
         &self,
+        provider: &CryptoProvider,
         certificate: &Certificate,
         cerificate_request: &CertificateRequest,
         handshake_context_exporter: &[u8; 64],
@@ -231,8 +234,6 @@ impl CertificateVerify {
                 cerificate_request,
                 handshake_context_exporter,
             )?;
-
-            let provider = CryptoProvider::get_default().ok_or(VerificationError::NoProvider)?;
 
             let schemes = provider.signature_verification_algorithms.mapping;
 
