@@ -1,5 +1,6 @@
 [package]
 name = "attestation-exported-authenticators"
+description = "An implementation of the draft IETF standard Remote Attestation with Exported Authenticators"
 version = "0.1.0"
 edition = "2024"
 license = "Apache-2.0"
