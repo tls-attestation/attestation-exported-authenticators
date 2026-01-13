@@ -100,6 +100,47 @@ impl CertificateRequest {
     }
 }
 
+impl From<ClientCertificateRequest> for CertificateRequest {
+    fn from(certificate_request: ClientCertificateRequest) -> Self {
+        Self {
+            certificate_request_context: certificate_request.certificate_request_context,
+            extensions: certificate_request.extensions,
+        }
+    }
+}
+
+/// A ClientCertificateRequest message as per RFC9261 Exported Authenticators
+#[derive(Debug, PartialEq, Clone)]
+pub struct ClientCertificateRequest {
+    /// Context used to link the response to this request
+    pub certificate_request_context: Vec<u8>,
+    /// The serialized extensions
+    pub extensions: Vec<u8>,
+}
+
+impl ClientCertificateRequest {
+    /// Serialize to bytes
+    pub fn encode(&self) -> Vec<u8> {
+        let certificate_request: CertificateRequest = self.clone().into();
+        certificate_request.encode()
+    }
+
+    /// Deserialize from bytes
+    pub fn decode(data: &[u8]) -> Result<Self, DecodeError> {
+        let certificate_request = CertificateRequest::decode(data)?;
+        Ok(certificate_request.into())
+    }
+}
+
+impl From<CertificateRequest> for ClientCertificateRequest {
+    fn from(certificate_request: CertificateRequest) -> Self {
+        Self {
+            certificate_request_context: certificate_request.certificate_request_context,
+            extensions: certificate_request.extensions,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -115,6 +156,20 @@ mod tests {
         assert_eq!(encoded.len(), 1 + 3 + 1 + 3 + 2 + 3);
 
         let decoded = CertificateRequest::decode(&encoded).unwrap();
+        assert_eq!(cert_request, decoded);
+    }
+
+    #[test]
+    fn encode_decode_client_certificate_request() {
+        let cert_request = ClientCertificateRequest {
+            certificate_request_context: b"foo".to_vec(),
+            extensions: b"bar".to_vec(),
+        };
+
+        let encoded = cert_request.encode();
+        assert_eq!(encoded.len(), 1 + 3 + 1 + 3 + 2 + 3);
+
+        let decoded = ClientCertificateRequest::decode(&encoded).unwrap();
         assert_eq!(cert_request, decoded);
     }
 }
