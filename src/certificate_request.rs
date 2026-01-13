@@ -6,7 +6,7 @@ use std::io::Read;
 pub struct CertificateRequest {
     /// Context used to link the response to this request
     pub certificate_request_context: Vec<u8>,
-    /// The serialized extensions
+    /// The extensions
     pub extensions: Vec<Extension>,
 }
 
@@ -125,6 +125,54 @@ impl CertificateRequest {
     }
 }
 
+impl From<ClientCertificateRequest> for CertificateRequest {
+    fn from(certificate_request: ClientCertificateRequest) -> Self {
+        Self {
+            certificate_request_context: certificate_request.certificate_request_context,
+            extensions: certificate_request.extensions,
+        }
+    }
+}
+
+/// A ClientCertificateRequest message as per RFC9261 Exported Authenticators
+#[derive(Debug, PartialEq, Clone)]
+pub struct ClientCertificateRequest {
+    /// Context used to link the response to this request
+    pub certificate_request_context: Vec<u8>,
+    /// The extensions
+    pub extensions: Vec<Extension>,
+}
+
+impl ClientCertificateRequest {
+    pub fn new_with_cmw_extension(certificate_request_context: Vec<u8>) -> Self {
+        Self {
+            certificate_request_context,
+            extensions: vec![Extension::new_attestation_cmw(Vec::new())],
+        }
+    }
+
+    /// Serialize to bytes
+    pub fn encode(&self) -> Result<Vec<u8>, EncodeError> {
+        let certificate_request: CertificateRequest = self.clone().into();
+        certificate_request.encode()
+    }
+
+    /// Deserialize from bytes
+    pub fn decode(data: &[u8]) -> Result<Self, DecodeError> {
+        let certificate_request = CertificateRequest::decode(data)?;
+        Ok(certificate_request.into())
+    }
+}
+
+impl From<CertificateRequest> for ClientCertificateRequest {
+    fn from(certificate_request: CertificateRequest) -> Self {
+        Self {
+            certificate_request_context: certificate_request.certificate_request_context,
+            extensions: certificate_request.extensions,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -137,6 +185,17 @@ mod tests {
         assert_eq!(encoded.len(), 1 + 3 + 1 + 3 + 2 + 4);
 
         let decoded = CertificateRequest::decode(&encoded).unwrap();
+        assert_eq!(cert_request, decoded);
+    }
+
+    #[test]
+    fn encode_decode_client_certificate_request() {
+        let cert_request = ClientCertificateRequest::new_with_cmw_extension(b"foo".to_vec());
+
+        let encoded = cert_request.encode().unwrap();
+        assert_eq!(encoded.len(), 1 + 3 + 1 + 3 + 2 + 4);
+
+        let decoded = ClientCertificateRequest::decode(&encoded).unwrap();
         assert_eq!(cert_request, decoded);
     }
 }
