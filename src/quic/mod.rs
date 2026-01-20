@@ -159,11 +159,8 @@ impl AttestedQuic {
         let mut context = [0u8; 32];
         OsRng.fill_bytes(&mut context);
 
-        let cert_request = ClientCertificateRequest {
-            certificate_request_context: context.to_vec(),
-            extensions: b"cmw_attestation".to_vec(), // TODO #14
-        };
-        send_stream.write_all(&cert_request.encode()).await?;
+        let cert_request = ClientCertificateRequest::new_with_cmw_extension(context.to_vec());
+        send_stream.write_all(&cert_request.encode()?).await?;
         send_stream.finish()?;
 
         // Prepare keying material which we will use for checking the quote input data

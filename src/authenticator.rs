@@ -206,11 +206,7 @@ mod tests {
     fn create_certificate_request() -> CertificateRequest {
         let mut context = [0u8; 32];
         OsRng.fill_bytes(&mut context);
-
-        CertificateRequest {
-            certificate_request_context: context.to_vec(),
-            extensions: b"cmw_attestation".to_vec(), // TODO
-        }
+        CertificateRequest::new_with_cmw_extension(context.to_vec())
     }
 
     fn ensure_rustls_provider_installed() {

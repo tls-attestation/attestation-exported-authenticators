@@ -282,7 +282,7 @@ impl CertificateVerify {
             // Hash(Handshake Context || authenticator request || Certificate)
             let mut hasher = Sha256::new();
             hasher.update(handshake_context_exporter);
-            hasher.update(certificate_request.encode());
+            hasher.update(certificate_request.encode()?);
             hasher.update(certificate.encode()?);
 
             hasher.finalize()
@@ -311,7 +311,7 @@ impl Finished {
         let mut mac = Hmac::<Sha256>::new_from_slice(finished_key_exporter)?;
 
         mac.update(handshake_context_exporter);
-        mac.update(&certificate_request.encode());
+        mac.update(&certificate_request.encode()?);
         mac.update(&certificate.encode()?);
         mac.update(&certificate_verify.encode()?);
 
