@@ -104,7 +104,7 @@ impl AttestationValidator {
         &self,
         monad: Monad,
         expected_input_data: [u8; 64],
-    ) -> Result<(), AttestationVerificationError> {
+    ) -> Result<MultiMeasurements, AttestationVerificationError> {
         let measurements = match monad.type_().as_str() {
             TDX_QUOTE_MIME => {
                 dcap_tdx::validate_attestation(&monad.value(), expected_input_data).await?
@@ -117,7 +117,7 @@ impl AttestationValidator {
             return Err(AttestationVerificationError::MeasurementsNotAccepted);
         }
 
-        Ok(())
+        Ok(measurements)
     }
 }
 

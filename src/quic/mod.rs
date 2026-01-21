@@ -4,7 +4,7 @@ mod test_helpers;
 use std::{net::SocketAddr, sync::Arc};
 
 use crate::{
-    attestation::{AttestationGenerator, AttestationValidator},
+    attestation::{AttestationGenerator, AttestationValidator, MultiMeasurements},
     authenticator::Authenticator,
     certificate_request::ClientCertificateRequest,
     CMWAttestation, EXPORTER_ATTESTATION_BINDING_LABEL, EXPORTER_SERVER_AUTHENTICATOR_FINISHED_KEY,
@@ -67,12 +67,13 @@ impl AttestedQuic {
         &self,
         server_addr: SocketAddr,
         server_name: &str,
-    ) -> Result<quinn::Connection, Error> {
+    ) -> Result<(quinn::Connection, MultiMeasurements), Error> {
         let conn = self.endpoint.connect(server_addr, server_name)?.await?;
+        println!("connected");
 
-        self.handle_connection_client(&conn).await?;
+        let measurements = self.handle_connection_client(&conn).await?;
 
-        Ok(conn)
+        Ok((conn, measurements))
     }
 
     /// Connect to a remote peer with given [ClientConfig], do an attestion exchange, and return
@@ -82,15 +83,15 @@ impl AttestedQuic {
         config: ClientConfig,
         server_addr: SocketAddr,
         server_name: &str,
-    ) -> Result<quinn::Connection, Error> {
+    ) -> Result<(quinn::Connection, MultiMeasurements), Error> {
         let conn = self
             .endpoint
             .connect_with(config, server_addr, server_name)?
             .await?;
 
-        self.handle_connection_client(&conn).await?;
+        let measurements = self.handle_connection_client(&conn).await?;
 
-        Ok(conn)
+        Ok((conn, measurements))
     }
 
     /// Do an attestation exchange with an incoming connection
@@ -153,7 +154,10 @@ impl AttestedQuic {
     }
 
     /// Given an outgoing connection, make a [CertificateRequest] and read and verify an attestation [Authenticator]
-    async fn handle_connection_client(&self, conn: &quinn::Connection) -> Result<(), Error> {
+    async fn handle_connection_client(
+        &self,
+        conn: &quinn::Connection,
+    ) -> Result<MultiMeasurements, Error> {
         let (mut send_stream, mut recv_stream) = conn.open_bi().await?;
 
         let mut context = [0u8; 32];
@@ -203,11 +207,12 @@ impl AttestedQuic {
         let cmw_attestation_extension = authenticator.get_attestation_cmw_extension()?;
         let cmw = cmw_attestation_extension.monad_cmw()?;
 
-        self.attestation_validator
+        let measurements = self
+            .attestation_validator
             .validate_attestation(cmw, keying_material)
             .await?;
 
-        Ok(())
+        Ok(measurements)
     }
 }
 
