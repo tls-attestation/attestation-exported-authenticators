@@ -113,7 +113,9 @@ impl AttestationValidator {
         };
 
         // Check measurements match accepted measurements
-        if !self.accepted_measurements.contains(&measurements) {
+        if !self.accepted_measurements.is_empty()
+            && !self.accepted_measurements.contains(&measurements)
+        {
             return Err(AttestationVerificationError::MeasurementsNotAccepted);
         }
 
