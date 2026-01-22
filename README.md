@@ -10,7 +10,7 @@ In order to provide the evidence in a self-describing, platform agnostic way it 
 
 The protocol supports server-side, client-side, and mutual attestation, meaning either or both client and server can provide evidence.
 
-A test is included which demonstrates using this with QUIC (for transport) and Intel TDX (as confidential compute platform): [tests/quic_tdx.rs](tests/quic_tdx.rs).
+A included is an `AttestedQuic` server which demonstrates using this with QUIC (for transport) and Intel TDX (as confidential compute platform): [src/quic/mod.rs](src/quic/mod.rs).
 
 By default, this test will use mock quotes so that the test will run on non-TDX hardware. To run the test with production quotes on TDX hardware, disable the 'mock' feature by running:
 
