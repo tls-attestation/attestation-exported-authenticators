@@ -13,7 +13,7 @@ pub fn generate_to_monad(input: [u8; 64]) -> Result<Monad, AttestationGeneration
 }
 
 /// Create a mock quote for testing on non-TDX hardware
-#[cfg(test)]
+#[cfg(any(test, feature = "mock"))]
 pub fn generate_quote(input: [u8; 64]) -> Result<Vec<u8>, AttestationGenerationError> {
     use rand_core::OsRng;
     let attestation_key = tdx_quote::SigningKey::random(&mut OsRng);
@@ -28,7 +28,7 @@ pub fn generate_quote(input: [u8; 64]) -> Result<Vec<u8>, AttestationGenerationE
     .as_bytes())
 }
 
-#[cfg(not(test))]
+#[cfg(not(any(test, feature = "mock")))]
 pub fn generate_quote(input: [u8; 64]) -> Result<Vec<u8>, AttestationGenerationError> {
     Ok(configfs_tsm::create_quote(input)?)
 }
